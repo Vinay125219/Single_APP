@@ -37,9 +37,14 @@ jobs:
             python3 --version
 
             pip3 install --upgrade pip setuptools wheel
-            pip3 install pyinstaller
+            pip3 install pyinstaller flake8
 
             cd /src
+
+            # Lint the code
+            echo "Linting with flake8..."
+            flake8 . --count --exit-zero --max-line-length=127 --statistics
+            echo "✅ Linting complete."
 
             # Test the script first
             python3 -c "import main; print('Script syntax OK')"
@@ -48,9 +53,9 @@ jobs:
             export TCL_LIBRARY=/usr/share/tcl8.5
             export TK_LIBRARY=/usr/share/tk8.5
             pyinstaller --onefile --noconsole main.py -n device_monitor_rhel7 \
-              --add-binary "/usr/lib64/libtcl8.5.so:." \
-              --add-binary "/usr/lib64/libtk8.5.so:." \
-              --add-data "/usr/share/tcl8.5:lib/tcl8.5" \
+              --add-binary "/usr/lib64/libtcl8.5.so:."
+              --add-binary "/usr/lib64/libtk8.5.so:."
+              --add-data "/usr/share/tcl8.5:lib/tcl8.5"
               --add-data "/usr/share/tk8.5:lib/tk8.5"
             echo "✅ Build completed. Executable is at dist/device_monitor_rhel7"
 
