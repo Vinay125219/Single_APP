@@ -3,13 +3,12 @@
 """
 Device Monitor Application
 A Python tkinter-based GUI application for USB device monitoring and system control
-Compatible with RHEL 7.9
+Compatible with RHEL 7.9 - Updated to use threading instead of multiprocessing
 """
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import threading
-import multiprocessing
 import subprocess
 import os
 import time
@@ -32,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 class USBMonitor:
-    """USB Device Monitor with multiprocessing support"""
+    """USB Device Monitor with threading support"""
     
     def __init__(self, device_queue, control_queue):
         self.device_queue = device_queue
@@ -43,7 +42,10 @@ class USBMonitor:
             "4761_1": "1809:4761"
         }
         self.running = False
+        self.paused = False
         self.monitoring_interval = 1.0
+        self.monitor_thread = None
+        self._lock = threading.Lock()
     
     def is_device_connected(self, vendor_id, product_id, device_index=1):
         """Check if a specific USB device is connected"""
@@ -96,10 +98,67 @@ class USBMonitor:
         
         return device_status
     
+    def start_monitoring(self):
+        """Start the monitoring thread"""
+        with self._lock:
+            if self.running:
+                logger.warning("Monitor is already running")
+                return False
+            
+            self.running = True
+            self.paused = False
+            self.monitor_thread = threading.Thread(target=self.monitor_loop, daemon=True)
+            self.monitor_thread.start()
+            logger.info("USB Monitor started")
+            return True
+    
+    def stop_monitoring(self):
+        """Stop the monitoring thread"""
+        with self._lock:
+            if not self.running:
+                return
+            
+            self.running = False
+            
+        # Send stop command to ensure quick shutdown
+        try:
+            self.control_queue.put('stop', timeout=1)
+        except queue.Full:
+            pass
+        
+        # Wait for thread to finish
+        if self.monitor_thread and self.monitor_thread.is_alive():
+            self.monitor_thread.join(timeout=5)
+            if self.monitor_thread.is_alive():
+                logger.warning("Monitor thread did not stop gracefully")
+        
+        logger.info("USB Monitor stopped")
+    
+    def pause_monitoring(self):
+        """Pause monitoring without stopping the thread"""
+        with self._lock:
+            if self.running:
+                self.paused = True
+                try:
+                    self.control_queue.put('pause', timeout=1)
+                except queue.Full:
+                    pass
+                logger.info("USB Monitor paused")
+    
+    def resume_monitoring(self):
+        """Resume monitoring"""
+        with self._lock:
+            if self.running:
+                self.paused = False
+                try:
+                    self.control_queue.put('resume', timeout=1)
+                except queue.Full:
+                    pass
+                logger.info("USB Monitor resumed")
+    
     def monitor_loop(self):
-        """Main monitoring loop running in separate process"""
-        self.running = True
-        logger.info("USB Monitor started")
+        """Main monitoring loop running in separate thread"""
+        logger.info("USB Monitor thread started")
         
         while self.running:
             try:
@@ -107,18 +166,23 @@ class USBMonitor:
                 try:
                     command = self.control_queue.get_nowait()
                     if command == 'stop':
-                        self.running = False
                         break
                     elif command == 'pause':
-                        time.sleep(1)
-                        continue
+                        self.paused = True
+                    elif command == 'resume':
+                        self.paused = False
                 except queue.Empty:
                     pass
+                
+                # Skip device checking if paused
+                if self.paused:
+                    time.sleep(0.5)
+                    continue
                 
                 # Check devices
                 device_status = self.check_devices()
                 
-                # Send status to main process
+                # Send status to main thread
                 try:
                     self.device_queue.put(('device_status', device_status), timeout=1)
                 except queue.Full:
@@ -134,7 +198,17 @@ class USBMonitor:
                     pass
                 time.sleep(5)  # Wait before retrying
         
-        logger.info("USB Monitor stopped")
+        logger.info("USB Monitor thread stopped")
+    
+    def is_running(self):
+        """Check if monitor is running"""
+        with self._lock:
+            return self.running and self.monitor_thread and self.monitor_thread.is_alive()
+    
+    def is_paused(self):
+        """Check if monitor is paused"""
+        with self._lock:
+            return self.paused
 
 
 class SystemController:
@@ -243,6 +317,7 @@ class ApplicationLauncher:
         self.process_monitor_thread = None
         self.is_running = False
         self.callbacks = {}
+        self._lock = threading.Lock()
     
     def set_callback(self, event, callback):
         """Set callback for events (started, finished, error)"""
@@ -250,8 +325,9 @@ class ApplicationLauncher:
     
     def launch_application(self, executable_path):
         """Launch external application"""
-        if self.is_running:
-            raise RuntimeError("Another application is already running")
+        with self._lock:
+            if self.is_running:
+                raise RuntimeError("Another application is already running")
         
         if not os.path.exists(executable_path):
             raise FileNotFoundError(f"Executable not found: {executable_path}")
@@ -270,7 +346,8 @@ class ApplicationLauncher:
                 stderr=subprocess.PIPE
             )
             
-            self.is_running = True
+            with self._lock:
+                self.is_running = True
             
             # Start monitoring thread
             self.process_monitor_thread = threading.Thread(
@@ -295,7 +372,9 @@ class ApplicationLauncher:
         """Monitor the launched process"""
         try:
             exit_code = self.current_process.wait()
-            self.is_running = False
+            
+            with self._lock:
+                self.is_running = False
             
             if 'finished' in self.callbacks:
                 self.callbacks['finished'](exit_code)
@@ -304,32 +383,37 @@ class ApplicationLauncher:
             
         except Exception as e:
             logger.error(f"Process monitoring error: {e}")
-            self.is_running = False
+            with self._lock:
+                self.is_running = False
             if 'error' in self.callbacks:
                 self.callbacks['error'](str(e))
     
     def terminate_application(self):
         """Terminate the running application"""
-        if self.current_process and self.is_running:
-            try:
-                self.current_process.terminate()
-                
-                # Wait for graceful termination
-                try:
-                    self.current_process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    # Force kill if not terminated gracefully
-                    self.current_process.kill()
-                    self.current_process.wait()
-                
-                self.is_running = False
-                logger.info("Application terminated")
+        with self._lock:
+            if not self.current_process or not self.is_running:
                 return True
-                
-            except Exception as e:
-                logger.error(f"Failed to terminate application: {e}")
-                return False
-        return True
+        
+        try:
+            self.current_process.terminate()
+            
+            # Wait for graceful termination
+            try:
+                self.current_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                # Force kill if not terminated gracefully
+                self.current_process.kill()
+                self.current_process.wait()
+            
+            with self._lock:
+                self.is_running = False
+            
+            logger.info("Application terminated")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to terminate application: {e}")
+            return False
 
 
 class DeviceMonitorGUI:
@@ -351,10 +435,10 @@ class DeviceMonitorGUI:
         self.selected_executable = ""
         self.device_status = {}
         
-        # Multiprocessing components
-        self.device_queue = multiprocessing.Queue()
-        self.control_queue = multiprocessing.Queue()
-        self.monitor_process = None
+        # Threading components
+        self.device_queue = queue.Queue()
+        self.control_queue = queue.Queue()
+        self.usb_monitor = USBMonitor(self.device_queue, self.control_queue)
         
         # Application launcher
         self.app_launcher = ApplicationLauncher()
@@ -626,21 +710,21 @@ class DeviceMonitorGUI:
         exit_btn.pack(side='left', padx=10)
     
     def start_monitoring(self):
-        """Start USB monitoring process"""
+        """Start USB monitoring thread"""
         try:
-            monitor = USBMonitor(self.device_queue, self.control_queue)
-            self.monitor_process = multiprocessing.Process(
-                target=monitor.monitor_loop,
-                daemon=True
-            )
-            self.monitor_process.start()
-            logger.info("USB monitoring process started")
+            success = self.usb_monitor.start_monitoring()
+            if success:
+                logger.info("USB monitoring thread started")
+                self.status_var.set("USB monitoring started")
+            else:
+                logger.error("Failed to start USB monitoring")
+                messagebox.showerror("Error", "Failed to start USB monitoring")
         except Exception as e:
             logger.error(f"Failed to start monitoring: {e}")
             messagebox.showerror("Error", f"Failed to start USB monitoring: {e}")
     
     def update_device_status(self):
-        """Update device status from monitoring process"""
+        """Update device status from monitoring thread"""
         try:
             while True:
                 try:
@@ -678,13 +762,13 @@ class DeviceMonitorGUI:
         """Toggle USB monitoring on/off"""
         if self.monitoring_var.get():
             try:
-                self.control_queue.put('resume')
+                self.usb_monitor.resume_monitoring()
                 self.status_var.set("Monitoring enabled")
             except Exception as e:
                 logger.error(f"Failed to resume monitoring: {e}")
         else:
             try:
-                self.control_queue.put('pause')
+                self.usb_monitor.pause_monitoring()
                 self.status_var.set("Monitoring paused")
                 # Reset button colors
                 for button in self.device_buttons.values():
@@ -900,14 +984,7 @@ class DeviceMonitorGUI:
         
         try:
             # Stop monitoring
-            if self.monitor_process and self.monitor_process.is_alive():
-                self.control_queue.put('stop')
-                self.monitor_process.join(timeout=5)
-                if self.monitor_process.is_alive():
-                    self.monitor_process.terminate()
-                    self.monitor_process.join(timeout=2)
-                    if self.monitor_process.is_alive():
-                        self.monitor_process.kill()
+            self.usb_monitor.stop_monitoring()
             
             logger.info("Application closing")
             self.root.quit()
@@ -920,9 +997,6 @@ class DeviceMonitorGUI:
 
 def main():
     """Main application entry point"""
-    # Enable multiprocessing on all platforms
-    multiprocessing.set_start_method('spawn', force=True)
-    
     # Create and run application
     root = tk.Tk()
     app = DeviceMonitorGUI(root)
@@ -936,12 +1010,8 @@ def main():
     finally:
         # Cleanup
         try:
-            if hasattr(app, 'monitor_process') and app.monitor_process:
-                if app.monitor_process.is_alive():
-                    app.control_queue.put('stop')
-                    app.monitor_process.join(timeout=3)
-                    if app.monitor_process.is_alive():
-                        app.monitor_process.terminate()
+            if hasattr(app, 'usb_monitor'):
+                app.usb_monitor.stop_monitoring()
         except Exception as e:
             logger.error(f"Cleanup error: {e}")
 
