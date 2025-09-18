@@ -50,7 +50,11 @@ class USBMonitor:
     def is_device_connected(self, vendor_id, product_id, device_index=1):
         """Check if a specific USB device is connected"""
         try:
-            result = subprocess.run(['lsusb'], capture_output=True, text=True, timeout=10)
+            result = subprocess.run(['lsusb'], 
+                                  stdout=subprocess.PIPE, 
+                                  stderr=subprocess.PIPE, 
+                                  universal_newlines=True,  # Python 3.6 equivalent of text=True
+                                  timeout=10)
             if result.returncode != 0:
                 return False
                 
