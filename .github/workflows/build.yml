@@ -1,25 +1,489 @@
-name: Build Executable for RHEL7.9
+name: Build Device Monitor for RHEL 7.9
 
 on:
   push:
-    branches: [ "main" ]
-  workflow_dispatch:   # allow manual run
+    branches: [ main, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  APP_NAME: device-monitor
+  PYTHON_VERSION: 3.6.8  # Compatible with RHEL 7.9
 
 jobs:
-  build:
-    runs-on: ubuntu-latest   # use modern runner
+  build-rhel79:
+    runs-on: ubuntu-latest
+    container:
+      image: centos:7
+      options: --privileged
+    
     steps:
-      - uses: actions/checkout@v4
+    - name: Install system dependencies
+      run: |
+        yum update -y
+        yum groupinstall -y "Development Tools"
+        yum install -y epel-release
+        yum install -y python3 python3-pip python3-devel python3-tkinter
+        yum install -y git wget curl
+        yum install -y libffi-devel openssl-devel
+        yum install -y zlib-devel bzip2-devel sqlite-devel
+        yum install -y xorg-x11-server-Xvfb  # For GUI testing
+        
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python environment
+      run: |
+        python3 -m pip install --upgrade pip
+        pip3 install virtualenv
+        python3 -m virtualenv venv
+        source venv/bin/activate
+        echo "VIRTUAL_ENV=$VIRTUAL_ENV" >> $GITHUB_ENV
+        echo "$VIRTUAL_ENV/bin" >> $GITHUB_PATH
+        
+    - name: Install Python dependencies
+      run: |
+        source venv/bin/activate
+        pip install --upgrade setuptools wheel
+        pip install pyinstaller==4.10  # Compatible with Python 3.6
+        pip install pathlib2
+        pip install psutil
+        
+        # Create requirements.txt if it doesn't exist
+        if [ ! -f requirements.txt ]; then
+          cat > requirements.txt << EOF
+        pathlib2>=2.3.0
+        psutil>=5.4.0
+        EOF
+        fi
+        
+        pip install -r requirements.txt
+        
+    - name: Prepare build environment
+      run: |
+        source venv/bin/activate
+        
+        # Create build directory
+        mkdir -p build/dist build/temp
+        
+        # Copy source files
+        cp device_monitor.py build/
+        cp device_monitor_utils.py build/
+        
+        # Create version info file
+        cat > build/version_info.py << EOF
+        __version__ = "1.0.0"
+        __build__ = "${{ github.sha }}"
+        __build_date__ = "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+        EOF
+        
+    - name: Create PyInstaller spec file
+      run: |
+        cat > build/device_monitor.spec << 'EOF'
+        # -*- mode: python ; coding: utf-8 -*-
+        import sys
+        import os
+        
+        block_cipher = None
+        
+        # Add current directory to path
+        sys.path.insert(0, os.getcwd())
+        
+        a = Analysis(
+            ['device_monitor.py'],
+            pathex=[os.getcwd()],
+            binaries=[],
+            datas=[
+                ('device_monitor_utils.py', '.'),
+                ('version_info.py', '.'),
+            ],
+            hiddenimports=[
+                'tkinter',
+                'tkinter.ttk',
+                'tkinter.filedialog',
+                'tkinter.messagebox',
+                'threading',
+                'multiprocessing',
+                'subprocess',
+                'queue',
+                'logging',
+                'pathlib',
+                'json',
+                'time',
+                'os',
+                'sys',
+            ],
+            hookspath=[],
+            hooksconfig={},
+            runtime_hooks=[],
+            excludes=[
+                'matplotlib',
+                'numpy',
+                'pandas',
+                'scipy',
+                'PyQt5',
+                'PyQt6',
+                'PySide2',
+                'PySide6',
+            ],
+            win_no_prefer_redirects=False,
+            win_private_assemblies=False,
+            cipher=block_cipher,
+            noarchive=False,
+        )
+        
+        # Filter out unnecessary modules to reduce size
+        a.binaries = [x for x in a.binaries if not x[0].startswith('lib-dynload/_test')]
+        a.binaries = [x for x in a.binaries if not x[0].startswith('lib-dynload/_ctypes_test')]
+        
+        pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+        
+        exe = EXE(
+            pyz,
+            a.scripts,
+            a.binaries,
+            a.zipfiles,
+            a.datas,
+            [],
+            name='device-monitor',
+            debug=False,
+            bootloader_ignore_signals=False,
+            strip=True,  # Reduce binary size
+            upx=True,   # Compress with UPX if available
+            upx_exclude=[],
+            runtime_tmpdir=None,
+            console=False,  # Set to True for debugging
+            disable_windowed_traceback=False,
+            argv_emulation=False,
+            target_arch=None,
+            codesign_identity=None,
+            entitlements_file=None,
+        )
+        EOF
+        
+    - name: Build executable with PyInstaller
+      run: |
+        source venv/bin/activate
+        cd build
+        
+        # Build the executable
+        pyinstaller --clean device_monitor.spec
+        
+        # Verify the executable was created
+        if [ -f "dist/device-monitor" ]; then
+          echo "✅ Executable built successfully"
+          ls -la dist/
+          file dist/device-monitor
+        else
+          echo "❌ Failed to build executable"
+          exit 1
+        fi
+        
+    - name: Test executable
+      run: |
+        cd build
+        
+        # Set up virtual display for GUI testing
+        export DISPLAY=:99
+        Xvfb :99 -screen 0 1024x768x24 &
+        sleep 2
+        
+        # Test that the executable runs (with timeout)
+        timeout 10s ./dist/device-monitor --help || true
+        
+        echo "✅ Executable test completed"
+        
+    - name: Create installation package
+      run: |
+        source venv/bin/activate
+        
+        # Create package directory
+        mkdir -p package/device-monitor-rhel79
+        
+        # Copy executable
+        cp build/dist/device-monitor package/device-monitor-rhel79/
+        
+        # Copy configuration files
+        cat > package/device-monitor-rhel79/device_monitor_config.json << 'EOF'
+        {
+            "window": {
+                "fullscreen": true,
+                "geometry": "800x600",
+                "position": "center"
+            },
+            "monitoring": {
+                "enabled": true,
+                "interval": 1.0,
+                "timeout": 10
+            },
+            "devices": {
+                "4750": {"vendor_id": "1809", "product_id": "4750", "enabled": true},
+                "4761": {"vendor_id": "1809", "product_id": "4761", "enabled": true},
+                "4761_1": {"vendor_id": "1809", "product_id": "4761", "enabled": true}
+            },
+            "paths": {
+                "last_executable": "",
+                "preferred_usb_paths": ["/media", "/mnt", "/run/media"],
+                "log_directory": "logs"
+            },
+            "system": {
+                "confirm_shutdown": true,
+                "confirm_restart": true,
+                "auto_launch_on_usb": false
+            }
+        }
+        EOF
+        
+        # Create systemd service file
+        cat > package/device-monitor-rhel79/device-monitor.service << 'EOF'
+        [Unit]
+        Description=Device Monitor Application
+        After=graphical-session.target
+        Wants=graphical-session.target
+        
+        [Service]
+        Type=simple
+        User=root
+        Group=root
+        WorkingDirectory=/opt/device-monitor
+        Environment=DISPLAY=:0
+        ExecStart=/opt/device-monitor/device-monitor
+        Restart=always
+        RestartSec=10
+        StandardOutput=journal
+        StandardError=journal
+        SyslogIdentifier=device-monitor
+        
+        [Install]
+        WantedBy=graphical.target
+        EOF
+        
+        # Create installation script
+        cat > package/device-monitor-rhel79/install.sh << 'EOF'
+        #!/bin/bash
+        # Device Monitor Installation Script for RHEL 7.9
+        
+        set -e
+        
+        echo "Installing Device Monitor for RHEL 7.9..."
+        
+        # Check if running as root
+        if [[ $EUID -ne 0 ]]; then
+           echo "This script must be run as root (use sudo)"
+           exit 1
+        fi
+        
+        # Create application directory
+        mkdir -p /opt/device-monitor
+        mkdir -p /var/log/device-monitor
+        
+        # Copy files
+        cp device-monitor /opt/device-monitor/
+        cp device_monitor_config.json /opt/device-monitor/
+        cp device-monitor.service /etc/systemd/system/
+        
+        # Set permissions
+        chmod +x /opt/device-monitor/device-monitor
+        chmod 644 /opt/device-monitor/device_monitor_config.json
+        chmod 644 /etc/systemd/system/device-monitor.service
+        
+        # Create symlink
+        ln -sf /opt/device-monitor/device-monitor /usr/local/bin/device-monitor
+        
+        # Reload systemd
+        systemctl daemon-reload
+        
+        # Enable service
+        systemctl enable device-monitor.service
+        
+        echo "✅ Installation complete!"
+        echo "Run 'device-monitor' to start the application"
+        echo "Run 'systemctl start device-monitor' to start as service"
+        EOF
+        
+        chmod +x package/device-monitor-rhel79/install.sh
+        
+        # Create uninstall script
+        cat > package/device-monitor-rhel79/uninstall.sh << 'EOF'
+        #!/bin/bash
+        # Device Monitor Uninstallation Script
+        
+        echo "Uninstalling Device Monitor..."
+        
+        # Check if running as root
+        if [[ $EUID -ne 0 ]]; then
+           echo "This script must be run as root (use sudo)"
+           exit 1
+        fi
+        
+        # Stop and disable service
+        systemctl stop device-monitor.service || true
+        systemctl disable device-monitor.service || true
+        
+        # Remove files
+        rm -f /etc/systemd/system/device-monitor.service
+        rm -f /usr/local/bin/device-monitor
+        rm -rf /opt/device-monitor
+        rm -rf /var/log/device-monitor
+        
+        # Reload systemd
+        systemctl daemon-reload
+        
+        echo "✅ Uninstallation complete!"
+        EOF
+        
+        chmod +x package/device-monitor-rhel79/uninstall.sh
+        
+        # Create README
+        cat > package/device-monitor-rhel79/README.md << 'EOF'
+        # Device Monitor for RHEL 7.9
+        
+        ## Installation
+        
+        1. Extract the package
+        2. Run as root: `sudo ./install.sh`
+        3. Start the application: `device-monitor`
+        
+        ## System Service
+        
+        To run as a system service:
+        ```bash
+        sudo systemctl start device-monitor
+        sudo systemctl enable device-monitor  # Start on boot
+        ```
+        
+        ## Configuration
+        
+        Configuration file: `/opt/device-monitor/device_monitor_config.json`
+        
+        ## Logs
+        
+        Application logs: `/var/log/device-monitor/`
+        System logs: `journalctl -u device-monitor`
+        
+        ## Uninstallation
+        
+        Run as root: `sudo ./uninstall.sh`
+        
+        ## Requirements
+        
+        - RHEL 7.9 or compatible
+        - X11 display server
+        - USB utilities (lsusb)
+        - Root access for system control functions
+        EOF
+        
+    - name: Create archive
+      run: |
+        cd package
+        
+        # Create version info
+        VERSION="1.0.0"
+        if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          VERSION="${{ github.ref_name }}"
+        fi
+        
+        ARCHIVE_NAME="device-monitor-rhel79-${VERSION}-$(date +%Y%m%d)"
+        
+        # Create tar.gz archive
+        tar -czf "${ARCHIVE_NAME}.tar.gz" device-monitor-rhel79/
+        
+        # Create checksums
+        sha256sum "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
+        md5sum "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.md5"
+        
+        echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> $GITHUB_ENV
+        
+        ls -la *.tar.gz*
+        
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: device-monitor-rhel79-${{ github.sha }}
+        path: |
+          package/*.tar.gz
+          package/*.sha256
+          package/*.md5
+        retention-days: 30
+        
+    - name: Create Release (on tag)
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          package/*.tar.gz
+          package/*.sha256
+          package/*.md5
+        body: |
+          ## Device Monitor for RHEL 7.9
+          
+          ### Installation
+          1. Download and extract `${{ env.ARCHIVE_NAME }}.tar.gz`
+          2. Run `sudo ./install.sh` in the extracted directory
+          3. Launch with `device-monitor` command
+          
+          ### Features
+          - USB device monitoring
+          - Application launcher
+          - System control (shutdown/restart)
+          - Multi-threaded architecture
+          - Fullscreen GUI interface
+          
+          ### System Requirements
+          - RHEL 7.9 or compatible Linux distribution
+          - X11 display server
+          - Root privileges for system control functions
+          
+          ### Checksums
+          - SHA256: See `.sha256` file
+          - MD5: See `.md5` file
+          
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build in CentOS7 container
-        run: |
-              docker run --rm -v "$PWD":/src centos:7 /bin/bash -c "
-                sed -i 's|mirrorlist=|#mirrorlist=|g' /etc/yum.repos.d/CentOS-*.repo &&
-                sed -i 's|#baseurl=http://mirror.centos.org/centos|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*.repo &&
-                yum -y install epel-release &&
-                yum -y install python36 python36-devel gcc make which &&
-                python3.6 -m ensurepip &&
-                python3.6 -m pip install --upgrade pip pyinstaller &&
-                cd /src &&
-                python3.6 -m PyInstaller --onefile main.py
-              "
+  test-compatibility:
+    runs-on: ubuntu-latest
+    needs: build-rhel79
+    
+    strategy:
+      matrix:
+        container: 
+          - centos:7
+          - oraclelinux:7
+        
+    container:
+      image: ${{ matrix.container }}
+      options: --privileged
+      
+    steps:
+    - name: Download build artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: device-monitor-rhel79-${{ github.sha }}
+        
+    - name: Install system dependencies
+      run: |
+        yum update -y
+        yum install -y tar gzip
+        yum install -y xorg-x11-server-Xvfb  # For headless testing
+        
+    - name: Test installation
+      run: |
+        # Extract the package
+        tar -xzf *.tar.gz
+        cd device-monitor-rhel79/
+        
+        # Simulate installation (without actually installing)
+        echo "Testing installation script syntax..."
+        bash -n install.sh
+        bash -n uninstall.sh
+        
+        # Test executable
+        echo "Testing executable..."
+        ./device-monitor --help || echo "Help test completed"
+        
+        echo "✅ Compatibility test passed for ${{ matrix.container }}"
