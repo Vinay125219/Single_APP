@@ -3,33 +3,27 @@ name: Build Executable for RHEL7.9
 on:
   push:
     branches: [ "main" ]
-  workflow_dispatch:  # allows manual trigger
+  workflow_dispatch:   # allow manual run
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    container: centos:7   # simulate RHEL7.9 environment
+    runs-on: ubuntu-latest   # use modern runner
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
-      - name: Install Python & Build Tools
+      - name: Build in CentOS7 container
         run: |
-          yum -y install epel-release
-          yum -y install python36 python36-devel gcc make which
-          python3.6 -m ensurepip
-          python3.6 -m pip install --upgrade pip pyinstaller
-
-      - name: Install Dependencies (if any)
-        run: |
-          if [ -f requirements.txt ]; then
-            python3.6 -m pip install -r requirements.txt
-          fi
-
-      - name: Build Executable
-        run: python3.6 -m PyInstaller --onefile --noconsole main.py
+          docker run --rm -v "$PWD":/src centos:7 /bin/bash -c "
+            yum -y install epel-release &&
+            yum -y install python36 python36-devel gcc make which &&
+            python3.6 -m ensurepip &&
+            python3.6 -m pip install --upgrade pip pyinstaller &&
+            cd /src &&
+            python3.6 -m PyInstaller --onefile main.py
+          "
 
       - name: Upload Executable
         uses: actions/upload-artifact@v4
         with:
-          name: rhel7-executable
-          path: dist/app
+          name: device-monitor-rhel7
+          path: dist/main
