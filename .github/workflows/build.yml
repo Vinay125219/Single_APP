@@ -24,8 +24,7 @@ jobs:
           options: -v ${{ github.workspace }}:/src
           run: |
             set -e
-
-            # Fix CentOS 7 repo URLs (EOL -> vault.centos.org)
+            # Fix CentOS 7 repo URLs
             sed -i 's|mirrorlist=|#mirrorlist=|g' /etc/yum.repos.d/CentOS-*.repo
             sed -i 's|#baseurl=http://mirror.centos.org/centos|baseurl=http://vault.centos.org/centos|g' /etc/yum.repos.d/CentOS-*.repo
 
@@ -34,21 +33,25 @@ jobs:
             yum -y install python3 python3-pip python3-devel gcc gcc-c++ make which \
                            tk tcl python3-tkinter
 
+            # Check Python version
+            python3 --version
+
             pip3 install --upgrade pip setuptools wheel
             pip3 install pyinstaller
 
             cd /src
 
-            # Ensure PyInstaller finds Tcl/Tk runtime
+            # Test the script first
+            python3 -c "import main; print('Script syntax OK')"
+
+            # Build executable
             export TCL_LIBRARY=/usr/share/tcl8.5
             export TK_LIBRARY=/usr/share/tk8.5
-
             pyinstaller --onefile --noconsole main.py -n device_monitor_rhel7 \
               --add-binary "/usr/lib64/libtcl8.5.so:." \
               --add-binary "/usr/lib64/libtk8.5.so:." \
               --add-data "/usr/share/tcl8.5:lib/tcl8.5" \
               --add-data "/usr/share/tk8.5:lib/tk8.5"
-
             echo "✅ Build completed. Executable is at dist/device_monitor_rhel7"
 
       - name: Upload Executable Artifact
