@@ -29,7 +29,7 @@ jobs:
         run: python3.6 -m PyInstaller --onefile --noconsole main.py
 
       - name: Upload Executable
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: rhel7-executable
           path: dist/app
