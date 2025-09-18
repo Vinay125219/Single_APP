@@ -53,12 +53,12 @@ class USBMonitor:
             result = subprocess.run(['lsusb'], 
                                   stdout=subprocess.PIPE, 
                                   stderr=subprocess.PIPE, 
-                                  universal_newlines=True,  # Python 3.6 equivalent of text=True
                                   timeout=10)
             if result.returncode != 0:
                 return False
                 
-            lines = result.stdout.strip().split('\n')
+            stdout_str = result.stdout.decode('utf-8', errors='ignore')
+            lines = stdout_str.strip().split('\n')
             current_index = 0
             
             for line in lines:
@@ -75,10 +75,12 @@ class USBMonitor:
     def get_4761_device_paths(self):
         """Detect all USB-4761 device paths using lsusb output."""
         try:
-            result = subprocess.run(['lsusb'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+            result = subprocess.run(['lsusb'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
             if result.returncode != 0:
                 return []
-            lines = result.stdout.strip().split('\n')
+            
+            stdout_str = result.stdout.decode('utf-8', errors='ignore')
+            lines = stdout_str.strip().split('\n')
             device_paths = []
             for line in lines:
                 if 'ID 1809:4761' in line:
@@ -254,7 +256,8 @@ class SystemController:
         """Check if sudo is available"""
         try:
             result = subprocess.run(['which', 'sudo'], 
-                                  capture_output=True, 
+                                  stdout=subprocess.PIPE, 
+                                  stderr=subprocess.PIPE, 
                                   timeout=5)
             return result.returncode == 0
         except subprocess.SubprocessError:
@@ -265,7 +268,8 @@ class SystemController:
         """Check if sudo requires password"""
         try:
             result = subprocess.run(['sudo', '-n', 'true'], 
-                                  capture_output=True, 
+                                  stdout=subprocess.PIPE, 
+                                  stderr=subprocess.PIPE, 
                                   timeout=5)
             return result.returncode != 0
         except subprocess.SubprocessError:
@@ -330,7 +334,8 @@ class SystemController:
             try:
                 # Check if command exists
                 result = subprocess.run(['which', cmd[0]], 
-                                      capture_output=True, 
+                                      stdout=subprocess.PIPE, 
+                                      stderr=subprocess.PIPE, 
                                       timeout=5)
                 if result.returncode == 0:
                     subprocess.Popen(cmd)
@@ -813,7 +818,7 @@ class DeviceMonitorGUI:
     
     def browse_usb(self):
         """Browse USB devices for executables"""
-        usb_paths = ['/media', '/mnt', '/run/media']
+        usb_paths = ['/run/media', '/media', '/mnt']
         
         for path in usb_paths:
             if os.path.exists(path):
