@@ -72,34 +72,65 @@ class USBMonitor:
             logger.error(f"USB detection error: {e}")
             return False
     
+    def get_4761_device_paths(self):
+        """Detect all USB-4761 device paths using lsusb output."""
+        try:
+            result = subprocess.run(['lsusb'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+            if result.returncode != 0:
+                return []
+            lines = result.stdout.strip().split('\n')
+            device_paths = []
+            for line in lines:
+                if 'ID 1809:4761' in line:
+                    parts = line.split()
+                    bus = parts[1]
+                    device = parts[3].replace(':', '')
+                    device_paths.append(f'/dev/bus/usb/{bus}/{device}')
+            return device_paths
+        except Exception as e:
+            logger.error(f"Error detecting 4761 devices: {e}")
+            return []
+
     def check_devices(self):
-        """Check all known devices and report status"""
-        device_status = {}
-        
-        for device_name, device_id in self.known_devices.items():
-            try:
-                vendor_id, product_id = device_id.split(':')
-                
-                # Check for multiple instances
-                device_count = 0
-                device_index = 1
-                
-                while self.is_device_connected(vendor_id, product_id, device_index):
-                    device_count += 1
-                    device_index += 1
-                    if device_index > 10:  # Safety limit
-                        break
-                
-                device_status[device_name] = {
-                    'connected': device_count > 0,
-                    'count': device_count,
-                    'instances': list(range(1, device_count + 1)) if device_count > 0 else []
+        """Check all known devices and report status, dynamically mapping 4761 cards."""
+        device_status = {
+            "4750": {'connected': False, 'count': 0, 'instances': []},
+            "4761": {'connected': False, 'count': 0, 'instances': []},
+            "4761_1": {'connected': False, 'count': 0, 'instances': []}
+        }
+
+        # Check 4750
+        try:
+            vendor_id, product_id = self.known_devices["4750"].split(":")
+            connected = self.is_device_connected(vendor_id, product_id)
+            if connected:
+                device_status["4750"] = {
+                    'connected': True,
+                    'count': 1,
+                    'instances': [1]
                 }
-                
-            except Exception as e:
-                logger.error(f"Error checking device {device_name}: {e}")
-                device_status[device_name] = {'connected': False, 'count': 0, 'instances': []}
-        
+        except Exception as e:
+            logger.error(f"Error checking device 4750: {e}")
+
+        # Dynamically map 4761 devices
+        try:
+            paths_4761 = self.get_4761_device_paths()
+            for idx, path in enumerate(paths_4761):
+                if idx == 0:
+                    logical_name = "4761"
+                elif idx == 1:
+                    logical_name = "4761_1"
+                else:
+                    continue  # Support up to two 4761 devices
+
+                device_status[logical_name] = {
+                    'connected': True,
+                    'count': 1,
+                    'instances': [path],
+                }
+        except Exception as e:
+            logger.error(f"Error checking 4761 devices: {e}")
+
         return device_status
     
     def start_monitoring(self):
