@@ -1,0 +1,59 @@
+name: Build Windows - normal and kiosk
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python --version
+          python -m pip install --upgrade pip setuptools wheel
+          pip install pyinstaller flake8
+
+      - name: Lint
+        shell: pwsh
+        run: |
+          flake8 . --count --exit-zero --max-line-length=127 --statistics
+
+      - name: Test import
+        shell: pwsh
+        run: |
+          python -c "import main; print('Script syntax OK')"
+
+      - name: Build normal exe
+        shell: pwsh
+        run: |
+          pyinstaller --onefile --noconsole main.py -n device_monitor_windows
+
+      - name: Build kiosk exe (duplicate with _kiosk suffix)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build_kiosk | Out-Null
+          Copy-Item -LiteralPath dist/device_monitor_windows.exe -Destination build_kiosk/device_monitor_windows_kiosk.exe -Force
+
+      - name: Upload Windows Executables
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-executables
+          path: |
+            dist/device_monitor_windows.exe
+            build_kiosk/device_monitor_windows_kiosk.exe 

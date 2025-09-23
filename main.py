@@ -1037,8 +1037,55 @@ class DeviceMonitorGUI:
 
 def main():
     """Main application entry point"""
+    # Detect kiosk mode via environment variable, CLI flag, or executable name
+    kiosk_mode = False
+    try:
+        exe_name = os.path.basename(sys.executable).lower()
+        if (
+            os.environ.get('KIOSK', '').strip() == '1'
+            or '--kiosk' in sys.argv
+            or ('kiosk' in exe_name if getattr(sys, 'frozen', False) else False)
+        ):
+            kiosk_mode = True
+    except Exception:
+        kiosk_mode = False
+
     # Create and run application
     root = tk.Tk()
+
+    # Apply kiosk mode settings if requested
+    if kiosk_mode:
+        try:
+            # Fullscreen and topmost
+            root.attributes('-fullscreen', True)
+            root.attributes('-topmost', True)
+            # Hide window manager decorations if supported
+            try:
+                root.overrideredirect(True)
+            except Exception:
+                pass
+            # Hide cursor
+            try:
+                root.config(cursor='none')
+            except Exception:
+                pass
+            # Disable closing via window manager
+            try:
+                root.protocol("WM_DELETE_WINDOW", lambda: None)
+            except Exception:
+                pass
+            # Provide a secret key combo to exit kiosk during development (Ctrl+Alt+K)
+            def _exit_kiosk(event=None):
+                try:
+                    root.attributes('-fullscreen', False)
+                    root.overrideredirect(False)
+                    root.attributes('-topmost', False)
+                finally:
+                    root.quit()
+            root.bind_all('<Control-Alt-k>', _exit_kiosk)
+        except Exception as _kiosk_e:
+            logger.warning(f"Failed to enable kiosk mode: {_kiosk_e}")
+
     app = DeviceMonitorGUI(root)
     
     try:
