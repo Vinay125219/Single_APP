@@ -9,35 +9,22 @@ on:
 jobs:
   build-linux:
     runs-on: ubuntu-latest
+    container: quay.io/pypa/manylinux2014_x86_64
     steps:
     - uses: actions/checkout@v3
-    - name: Set up Python
-      uses: actions/setup-python@v3
-      with:
-        python-version: '3.8'
     - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install PyQt5 pyinstaller
-    - name: Build executable
-      run: pyinstaller --onefile --name device_monitor_linux main.py
-    - name: Create Kiosk package
-      run: |
-        mkdir -p kiosk_linux
-        cp dist/device_monitor_linux kiosk_linux/device_monitor
-        cp scripts/kiosk.sh kiosk_linux/
-        chmod +x kiosk_linux/kiosk.sh
-        tar -czvf device_monitor_linux_kiosk.tar.gz -C kiosk_linux .
-    - name: Upload Linux executable
+      run: /opt/python/cp38-cp38/bin/pip install pyinstaller
+    - name: Build Linux executable (no kiosk)
+      run: /opt/python/cp38-cp38/bin/pyinstaller --onefile --noconsole --name device_monitor_linux main.py
+    - name: Build Linux executable (with kiosk)
+      run: /opt/python/cp38-cp38/bin/pyinstaller --onefile --noconsole --add-data "scripts/kiosk.sh:." --name device_monitor_linux_kiosk main.py
+    - name: Upload Linux artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: device_monitor_linux
-        path: dist/device_monitor_linux
-    - name: Upload Linux Kiosk package
-      uses: actions/upload-artifact@v4
-      with:
-        name: device_monitor_linux_kiosk
-        path: device_monitor_linux_kiosk.tar.gz
+        name: linux-executables
+        path: |
+          dist/device_monitor_linux
+          dist/device_monitor_linux_kiosk
 
   build-windows:
     runs-on: windows-latest
@@ -50,22 +37,15 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install PyQt5 pyinstaller
-    - name: Build executable
-      run: pyinstaller --onefile --name device_monitor_windows main.py
-    - name: Create Kiosk package
-      run: |
-        mkdir kiosk_windows
-        copy dist\device_monitor_windows.exe kiosk_windows\device_monitor.exe
-        copy scripts\kiosk.bat kiosk_windows\
-        powershell -Command "Compress-Archive -Path kiosk_windows -DestinationPath device_monitor_windows_kiosk.zip"
-    - name: Upload Windows executable
+        pip install pyinstaller
+    - name: Build Windows executable (no kiosk)
+      run: pyinstaller --onefile --noconsole --name device_monitor_windows main.py
+    - name: Build Windows executable (with kiosk)
+      run: pyinstaller --onefile --noconsole --add-data "scripts/kiosk.bat;." --name device_monitor_windows_kiosk main.py
+    - name: Upload Windows artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: device_monitor_windows
-        path: dist/device_monitor_windows.exe
-    - name: Upload Windows Kiosk package
-      uses: actions/upload-artifact@v4
-      with:
-        name: device_monitor_windows_kiosk
-        path: device_monitor_windows_kiosk.zip
+        name: windows-executables
+        path: |
+          dist/device_monitor_windows.exe
+          dist/device_monitor_windows_kiosk.exe
