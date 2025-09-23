@@ -29,12 +29,12 @@ jobs:
         chmod +x kiosk_linux/kiosk.sh
         tar -czvf device_monitor_linux_kiosk.tar.gz -C kiosk_linux .
     - name: Upload Linux executable
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: device_monitor_linux
         path: dist/device_monitor_linux
     - name: Upload Linux Kiosk package
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: device_monitor_linux_kiosk
         path: device_monitor_linux_kiosk.tar.gz
@@ -60,12 +60,12 @@ jobs:
         copy scripts\kiosk.bat kiosk_windows\
         powershell -Command "Compress-Archive -Path kiosk_windows -DestinationPath device_monitor_windows_kiosk.zip"
     - name: Upload Windows executable
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: device_monitor_windows
         path: dist/device_monitor_windows.exe
     - name: Upload Windows Kiosk package
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: device_monitor_windows_kiosk
         path: device_monitor_windows_kiosk.zip
