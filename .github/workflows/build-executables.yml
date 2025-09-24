@@ -567,7 +567,8 @@ jobs:
         run: |
           cd "build_${{ matrix.mode }}\dist"
           # Quick test that executable starts (timeout after 5 seconds)
-          Start-Process -FilePath ".\device_monitor_windows_${{ matrix.mode }}.exe" -ArgumentList "--help" -Wait -TimeoutSec 5 -ErrorAction SilentlyContinue
+          $process = Start-Process -FilePath ".\device_monitor_windows_${{ matrix.mode }}.exe" -ArgumentList "--help" -PassThru
+          Wait-Process -InputObject $process -Timeout 5 -ErrorAction SilentlyContinue
           Write-Output "Executable test completed"
 
       - name: Create release package
