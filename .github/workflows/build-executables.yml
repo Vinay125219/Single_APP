@@ -310,13 +310,13 @@ jobs:
           fi
 
       - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: device-monitor-linux-${{ matrix.mode }}-${{ env.VERSION }}
           path: release/device_monitor_linux_${{ matrix.mode }}_${{ env.VERSION }}.tar.gz
 
       - name: Upload Linux full kiosk artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: matrix.mode == 'kiosk'
         with:
           name: device-monitor-linux-kiosk-full-${{ env.VERSION }}
@@ -673,13 +673,13 @@ jobs:
           }
 
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: device-monitor-windows-${{ matrix.mode }}-${{ env.VERSION }}
           path: release/device_monitor_windows_${{ matrix.mode }}_${{ env.VERSION }}.zip
 
       - name: Upload Windows full kiosk artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: matrix.mode == 'kiosk'
         with:
           name: device-monitor-windows-kiosk-full-${{ env.VERSION }}
