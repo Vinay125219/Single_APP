@@ -411,6 +411,10 @@ class ApplicationLauncher:
     def _monitor_process(self):
         """Monitor the launched process"""
         try:
+            if self.current_process is None:
+                logger.error("No process to monitor")
+                return
+                
             exit_code = self.current_process.wait()
             
             with self._lock:
@@ -459,16 +463,21 @@ class ApplicationLauncher:
 class DeviceMonitorGUI:
     """Main GUI Application"""
     
-    def __init__(self, root):
+    def __init__(self, root, kiosk_mode=False):
         self.root = root
+        self.kiosk_mode = kiosk_mode
         self.root.title("Device Monitor Application")
         self.root.geometry("800x600")
         self.root.configure(bg='#2c3e50')
         
-        # Make fullscreen
-        self.root.attributes('-fullscreen', True)
-        self.root.bind('<Escape>', lambda e: self.root.attributes('-fullscreen', False))
-        self.root.bind('<F11>', lambda e: self.root.attributes('-fullscreen', True))
+        # Make fullscreen only if not in kiosk mode (kiosk mode handles this separately)
+        if not self.kiosk_mode:
+            try:
+                self.root.attributes('-fullscreen', True)
+                self.root.bind('<Escape>', lambda e: self.root.attributes('-fullscreen', False))
+                self.root.bind('<F11>', lambda e: self.root.attributes('-fullscreen', True))
+            except tk.TclError as e:
+                logger.warning(f"Could not set fullscreen: {e}")
         
         # Application state
         self.identification_enabled = True
@@ -1056,19 +1065,27 @@ def main():
     # Apply kiosk mode settings if requested
     if kiosk_mode:
         try:
-            # Fullscreen and topmost
-            root.attributes('-fullscreen', True)
-            root.attributes('-topmost', True)
-            # Hide window manager decorations if supported
-            try:
-                root.overrideredirect(True)
-            except Exception:
-                pass
+            # Set overrideredirect first
+            root.overrideredirect(True)
             # Hide cursor
+            # try:
+            #     root.config(cursor='none')
+            # except Exception:
+            #     pass
+            # Set topmost
             try:
-                root.config(cursor='none')
+                root.attributes('-topmost', True)
             except Exception:
                 pass
+            # Try to set fullscreen after overrideredirect
+            try:
+                root.attributes('-fullscreen', True)
+            except tk.TclError:
+                # If fullscreen fails with overrideredirect, use maximize instead
+                try:
+                    root.state('zoomed')  # Windows maximize
+                except Exception:
+                    pass
             # Disable closing via window manager
             try:
                 root.protocol("WM_DELETE_WINDOW", lambda: None)
@@ -1086,7 +1103,7 @@ def main():
         except Exception as _kiosk_e:
             logger.warning(f"Failed to enable kiosk mode: {_kiosk_e}")
 
-    app = DeviceMonitorGUI(root)
+    app = DeviceMonitorGUI(root, kiosk_mode)
     
     try:
         root.mainloop()

@@ -1,0 +1,34 @@
+[Unit]
+Description=Device Monitor Kiosk Application
+After=graphical-session.target
+Wants=graphical-session.target
+Requires=display-manager.service
+
+[Service]
+Type=simple
+User=kioskuser
+Group=kioskuser
+Environment=DISPLAY=:0
+Environment=KIOSK=1
+Environment=XDG_RUNTIME_DIR=/run/user/1001
+Environment=XDG_SESSION_TYPE=x11
+Environment=HOME=/home/kioskuser
+WorkingDirectory=/opt/device-monitor
+ExecStartPre=/bin/sleep 10
+ExecStart=/usr/bin/python3 /opt/device-monitor/main.py --kiosk
+Restart=always
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/device-monitor /tmp /var/tmp
+
+[Install]
+WantedBy=graphical.target

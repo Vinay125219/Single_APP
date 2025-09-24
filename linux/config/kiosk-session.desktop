@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Device Monitor Kiosk Session
+Comment=Kiosk session for Device Monitor Application
+Exec=/opt/device-monitor/kiosk-session.sh
+Type=Application
+DesktopNames=KIOSK
+X-Ubuntu-Gettext-Domain=kiosk-session

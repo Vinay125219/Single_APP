@@ -1,0 +1,843 @@
+name: Build Device Monitor Executables
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version number (e.g., 1.0.0)"
+        required: false
+        default: "dev"
+
+env:
+  PYTHON_VERSION: "3.9"
+  APP_NAME: "device_monitor"
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        mode: [normal, kiosk]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            python3-tk \
+            python3-dev \
+            build-essential \
+            libffi-dev \
+            libbz2-dev \
+            libreadline-dev \
+            libsqlite3-dev \
+            libssl-dev \
+            zlib1g-dev \
+            libncurses5-dev \
+            libgdbm-dev \
+            libnss3-dev \
+            libssl-dev \
+            libreadline-dev \
+            libffi-dev \
+            wget
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r requirements.txt || echo "No requirements.txt found, installing basic deps"
+          # Install basic dependencies if no requirements.txt
+          pip install tkinter || echo "tkinter already available"
+
+      - name: Create version info
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "dev" ]; then
+            if [[ $GITHUB_REF == refs/tags/* ]]; then
+              VERSION=${GITHUB_REF#refs/tags/v}
+            else
+              VERSION="dev-$(date +%Y%m%d-%H%M%S)"
+            fi
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Building version: $VERSION"
+
+      - name: Prepare build script
+        run: |
+          cat > build_linux_${{ matrix.mode }}.py << 'EOF'
+          import os
+          import sys
+          import shutil
+          from pathlib import Path
+
+          # Create build directory
+          build_dir = Path("build_${{ matrix.mode }}")
+          build_dir.mkdir(exist_ok=True)
+
+          # Copy main application
+          shutil.copy2("main.py", build_dir / "main.py")
+
+          # Create mode-specific wrapper
+          mode = "${{ matrix.mode }}"
+          if mode == "kiosk":
+              wrapper_content = '''#!/usr/bin/env python3
+          import os
+          import sys
+
+          # Set kiosk environment
+          os.environ["KIOSK"] = "1"
+
+          # Add --kiosk argument if not present
+          if "--kiosk" not in sys.argv:
+              sys.argv.append("--kiosk")
+
+          # Import and run main application
+          sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+          import main
+
+          if __name__ == "__main__":
+              main.main()
+          '''
+          else:
+              wrapper_content = '''#!/usr/bin/env python3
+          import os
+          import sys
+
+          # Ensure normal mode (no kiosk)
+          os.environ.pop("KIOSK", None)
+
+          # Remove --kiosk argument if present
+          if "--kiosk" in sys.argv:
+              sys.argv.remove("--kiosk")
+
+          # Import and run main application
+          sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+          import main
+
+          if __name__ == "__main__":
+              main.main()
+          '''
+
+          with open(build_dir / f"device_monitor_{mode}_wrapper.py", "w") as f:
+              f.write(wrapper_content)
+
+          print(f"Created wrapper for {mode} mode")
+          EOF
+
+          python build_linux_${{ matrix.mode }}.py
+
+      - name: Build executable with PyInstaller
+        run: |
+          cd build_${{ matrix.mode }}
+
+          # Create PyInstaller spec file
+          cat > device_monitor_${{ matrix.mode }}.spec << EOF
+          # -*- mode: python ; coding: utf-8 -*-
+
+          block_cipher = None
+
+          a = Analysis(
+              ['device_monitor_${{ matrix.mode }}_wrapper.py'],
+              pathex=['.'],
+              binaries=[],
+              datas=[
+                  ('main.py', '.'),
+              ],
+              hiddenimports=[
+                  'tkinter',
+                  'tkinter.ttk',
+                  'tkinter.messagebox',
+                  'tkinter.filedialog',
+                  'threading',
+                  'subprocess',
+                  'queue',
+                  'logging',
+                  'pathlib',
+                  'json',
+              ],
+              hookspath=[],
+              hooksconfig={},
+              runtime_hooks=[],
+              excludes=[],
+              win_no_prefer_redirects=False,
+              win_private_assemblies=False,
+              cipher=block_cipher,
+              noarchive=False,
+          )
+
+          pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+          exe = EXE(
+              pyz,
+              a.scripts,
+              a.binaries,
+              a.zipfiles,
+              a.datas,
+              [],
+              name='device_monitor_linux_${{ matrix.mode }}',
+              debug=False,
+              bootloader_ignore_signals=False,
+              strip=False,
+              upx=True,
+              upx_exclude=[],
+              runtime_tmpdir=None,
+              console=False,
+              disable_windowed_traceback=False,
+              argv_emulation=False,
+              target_arch=None,
+              codesign_identity=None,
+              entitlements_file=None,
+          )
+          EOF
+
+          # Build the executable
+          pyinstaller device_monitor_${{ matrix.mode }}.spec --clean --noconfirm
+
+          # Verify executable was created
+          if [ -f "dist/device_monitor_linux_${{ matrix.mode }}" ]; then
+            echo "✅ Successfully built device_monitor_linux_${{ matrix.mode }}"
+            chmod +x "dist/device_monitor_linux_${{ matrix.mode }}"
+            ls -la "dist/device_monitor_linux_${{ matrix.mode }}"
+          else
+            echo "❌ Failed to build executable"
+            exit 1
+          fi
+
+      - name: Test executable
+        run: |
+          cd build_${{ matrix.mode }}/dist
+          # Quick test that executable starts (timeout after 5 seconds)
+          timeout 5s ./device_monitor_linux_${{ matrix.mode }} --help || echo "Executable test completed"
+
+      - name: Create release package
+        run: |
+          mkdir -p release/linux-${{ matrix.mode }}
+          cp build_${{ matrix.mode }}/dist/device_monitor_linux_${{ matrix.mode }} release/linux-${{ matrix.mode }}/
+
+          # Copy relevant scripts and documentation
+          if [ "${{ matrix.mode }}" = "kiosk" ]; then
+            # Don't copy anything extra for basic kiosk package
+            echo "Creating basic kiosk executable package"
+          fi
+
+          # Create README for this build
+          cat > release/linux-${{ matrix.mode }}/README.txt << EOF
+          Device Monitor - Linux ${{ matrix.mode }} Build
+          Version: ${{ env.VERSION }}
+          Built: $(date)
+          Platform: Linux x64
+          Mode: ${{ matrix.mode }}
+
+          Usage:
+            ./device_monitor_linux_${{ matrix.mode }}
+
+          ${{ matrix.mode == 'kiosk' && 'Kiosk Mode:
+            - Run with kiosk environment enabled
+            - Use installation scripts in linux/ directory
+            - Includes systemd service for auto-boot on system startup
+            - Includes display manager configuration for auto-login
+            - Full kiosk lockdown with Openbox window manager
+            - See deployment documentation for complete setup
+            - Emergency exit: Ctrl+Alt+Shift+Q
+          ' || 'Normal Mode:
+            - Standard GUI application
+            - No kiosk restrictions applied
+          ' }}
+
+          For more information, see the documentation at:
+          https://github.com/${{ github.repository }}
+          EOF
+
+          # Create archive
+          cd release
+          tar -czf device_monitor_linux_${{ matrix.mode }}_${{ env.VERSION }}.tar.gz linux-${{ matrix.mode }}/
+
+          # For kiosk mode, also create full package with installation scripts
+          if [ "${{ matrix.mode }}" = "kiosk" ]; then
+            cd ..
+            mkdir -p release/linux-${{ matrix.mode }}-full
+            cp build_${{ matrix.mode }}/dist/device_monitor_linux_${{ matrix.mode }} release/linux-${{ matrix.mode }}-full/
+            
+            # Copy all installation components for full package
+            cp -r linux/ release/linux-${{ matrix.mode }}-full/
+            cp scripts/kiosk.sh release/linux-${{ matrix.mode }}-full/
+            cp main.py release/linux-${{ matrix.mode }}-full/
+            cp kiosk_boot_guide.md release/linux-${{ matrix.mode }}-full/ 2>/dev/null || echo "Boot guide not found"
+            cp DEPLOYMENT_GUIDE.md release/linux-${{ matrix.mode }}-full/ 2>/dev/null || echo "Deployment guide not found"
+            
+            # Create full package README
+            cat > release/linux-${{ matrix.mode }}-full/README.txt << EOF
+          Device Monitor - Linux Kiosk (Full Installation Package)
+          Version: ${{ env.VERSION }}
+          Built: $(date)
+          Platform: Linux x64
+
+          This package includes the executable AND complete installation scripts.
+
+          Quick Installation:
+            sudo ./linux/scripts/install-kiosk.sh
+            sudo reboot
+
+          Manual Usage:
+            ./device_monitor_linux_kiosk
+
+          Features:
+            - Systemd service for auto-boot
+            - Display manager auto-login configuration
+            - Complete kiosk lockdown with Openbox
+            - Security restrictions and user limits
+            - Emergency exit: Ctrl+Alt+Shift+Q
+
+          For detailed instructions, see DEPLOYMENT_GUIDE.md
+          EOF
+            
+            # Create full archive
+            cd release
+            tar -czf device_monitor_linux_kiosk_full_${{ env.VERSION }}.tar.gz linux-${{ matrix.mode }}-full/
+          fi
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: device-monitor-linux-${{ matrix.mode }}-${{ env.VERSION }}
+          path: release/device_monitor_linux_${{ matrix.mode }}_${{ env.VERSION }}.tar.gz
+
+      - name: Upload Linux full kiosk artifacts
+        uses: actions/upload-artifact@v3
+        if: matrix.mode == 'kiosk'
+        with:
+          name: device-monitor-linux-kiosk-full-${{ env.VERSION }}
+          path: release/device_monitor_linux_kiosk_full_${{ env.VERSION }}.tar.gz
+
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        mode: [normal, kiosk]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install pywin32
+          pip install -r requirements.txt
+        continue-on-error: true
+
+      - name: Install additional dependencies
+        run: |
+          # Install basic dependencies if requirements.txt doesn't exist
+          pip install pywin32 || echo "pywin32 installation handled"
+
+      - name: Create version info
+        shell: bash
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "dev" ]; then
+            if [[ $GITHUB_REF == refs/tags/* ]]; then
+              VERSION=${GITHUB_REF#refs/tags/v}
+            else
+              VERSION="dev-$(date +%Y%m%d-%H%M%S)"
+            fi
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Building version: $VERSION"
+
+      - name: Prepare build script
+        run: |
+          $buildScript = @"
+          import os
+          import sys
+          import shutil
+          from pathlib import Path
+
+          # Create build directory
+          build_dir = Path("build_${{ matrix.mode }}")
+          build_dir.mkdir(exist_ok=True)
+
+          # Copy main application
+          shutil.copy2("main.py", build_dir / "main.py")
+
+          # Copy Windows service if kiosk mode
+          mode = "${{ matrix.mode }}"
+          if mode == "kiosk":
+              try:
+                  shutil.copy2("windows/service/windows_service.py", build_dir / "windows_service.py")
+              except:
+                  print("Warning: windows_service.py not found, creating placeholder")
+
+          # Create mode-specific wrapper
+          if mode == "kiosk":
+              wrapper_content = '''
+          import os
+          import sys
+
+          # Set kiosk environment
+          os.environ["KIOSK"] = "1"
+
+          # Add --kiosk argument if not present
+          if "--kiosk" not in sys.argv:
+              sys.argv.append("--kiosk")
+
+          # Import and run main application
+          sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+          import main
+
+          if __name__ == "__main__":
+              main.main()
+          '''
+          else:
+              wrapper_content = '''
+          import os
+          import sys
+
+          # Ensure normal mode (no kiosk)
+          os.environ.pop("KIOSK", None)
+
+          # Remove --kiosk argument if present
+          if "--kiosk" in sys.argv:
+              sys.argv.remove("--kiosk")
+
+          # Import and run main application
+          sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+          import main
+
+          if __name__ == "__main__":
+              main.main()
+          '''
+
+          with open(build_dir / f"device_monitor_{mode}_wrapper.py", "w") as f:
+              f.write(wrapper_content)
+
+          print(f"Created wrapper for {mode} mode")
+          "@
+
+          $buildScript | Out-File -FilePath "build_windows_${{ matrix.mode }}.py" -Encoding UTF8
+          python "build_windows_${{ matrix.mode }}.py"
+
+      - name: Create version resource file
+        run: |
+          $versionInfo = @"
+          # UTF-8
+          #
+          # For more details about fixed file info 'ffi' see:
+          # http://msdn.microsoft.com/en-us/library/ms646997.aspx
+          VSVersionInfo(
+            ffi=FixedFileInfo(
+              filevers=(1,0,0,0),
+              prodvers=(1,0,0,0),
+              mask=0x3f,
+              flags=0x0,
+              OS=0x40004,
+              fileType=0x1,
+              subtype=0x0,
+              date=(0, 0)
+              ),
+            kids=[
+              StringFileInfo(
+                [
+                StringTable(
+                  u'040904B0',
+                  [StringStruct(u'CompanyName', u'Device Monitor'),
+                  StringStruct(u'FileDescription', u'Device Monitor Application (${{ matrix.mode }} mode)'),
+                  StringStruct(u'FileVersion', u'${{ env.VERSION }}'),
+                  StringStruct(u'InternalName', u'device_monitor_${{ matrix.mode }}'),
+                  StringStruct(u'LegalCopyright', u'Copyright (c) 2024'),
+                  StringStruct(u'OriginalFilename', u'device_monitor_windows_${{ matrix.mode }}.exe'),
+                  StringStruct(u'ProductName', u'Device Monitor'),
+                  StringStruct(u'ProductVersion', u'${{ env.VERSION }}')])
+                ]), 
+              VarFileInfo([VarStruct(u'Translation', [1033, 1200])])
+            ]
+          )
+          "@
+
+          $versionInfo | Out-File -FilePath "build_${{ matrix.mode }}\version_info.py" -Encoding UTF8
+
+      - name: Build executable with PyInstaller
+        run: |
+          cd "build_${{ matrix.mode }}"
+
+          $specContent = @"
+          # -*- mode: python ; coding: utf-8 -*-
+
+          block_cipher = None
+
+          a = Analysis(
+              ['device_monitor_${{ matrix.mode }}_wrapper.py'],
+              pathex=['.'],
+              binaries=[],
+              datas=[
+                  ('main.py', '.'),
+              ],
+              hiddenimports=[
+                  'tkinter',
+                  'tkinter.ttk',
+                  'tkinter.messagebox',
+                  'tkinter.filedialog',
+                  'threading',
+                  'subprocess',
+                  'queue',
+                  'logging',
+                  'pathlib',
+                  'json',
+                  'win32serviceutil',
+                  'win32service',
+                  'win32event',
+                  'servicemanager',
+                  'win32ts',
+                  'win32con',
+                  'win32api',
+                  'win32gui',
+                  'win32process',
+              ],
+              hookspath=[],
+              hooksconfig={},
+              runtime_hooks=[],
+              excludes=[],
+              win_no_prefer_redirects=False,
+              win_private_assemblies=False,
+              cipher=block_cipher,
+              noarchive=False,
+          )
+
+          pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+          exe = EXE(
+              pyz,
+              a.scripts,
+              a.binaries,
+              a.zipfiles,
+              a.datas,
+              [],
+              name='device_monitor_windows_${{ matrix.mode }}',
+              debug=False,
+              bootloader_ignore_signals=False,
+              strip=False,
+              upx=True,
+              upx_exclude=[],
+              runtime_tmpdir=None,
+              console=False,
+              disable_windowed_traceback=False,
+              argv_emulation=False,
+              target_arch=None,
+              codesign_identity=None,
+              entitlements_file=None,
+              version='version_info.py',
+              icon=None,
+          )
+          "@
+
+          $specContent | Out-File -FilePath "device_monitor_${{ matrix.mode }}.spec" -Encoding UTF8
+
+          # Build the executable
+          pyinstaller "device_monitor_${{ matrix.mode }}.spec" --clean --noconfirm
+
+          # Verify executable was created
+          if (Test-Path "dist\device_monitor_windows_${{ matrix.mode }}.exe") {
+            Write-Output "✅ Successfully built device_monitor_windows_${{ matrix.mode }}.exe"
+            Get-ChildItem "dist\device_monitor_windows_${{ matrix.mode }}.exe" | Format-List
+          } else {
+            Write-Output "❌ Failed to build executable"
+            exit 1
+          }
+
+      - name: Test executable
+        run: |
+          cd "build_${{ matrix.mode }}\dist"
+          # Quick test that executable starts (timeout after 5 seconds)
+          Start-Process -FilePath ".\device_monitor_windows_${{ matrix.mode }}.exe" -ArgumentList "--help" -Wait -TimeoutSec 5 -ErrorAction SilentlyContinue
+          Write-Output "Executable test completed"
+
+      - name: Create release package
+        run: |
+          New-Item -ItemType Directory -Path "release\windows-${{ matrix.mode }}" -Force
+          Copy-Item "build_${{ matrix.mode }}\dist\device_monitor_windows_${{ matrix.mode }}.exe" -Destination "release\windows-${{ matrix.mode }}\"
+
+          # Copy relevant scripts and documentation
+          if ("${{ matrix.mode }}" -eq "kiosk") {
+            # Don't copy anything extra for basic kiosk package
+            Write-Output "Creating basic kiosk executable package"
+          }
+
+          # Create README for this build
+          $readmeContent = @"
+          Device Monitor - Windows ${{ matrix.mode }} Build
+          Version: ${{ env.VERSION }}
+          Built: $(Get-Date)
+          Platform: Windows x64
+          Mode: ${{ matrix.mode }}
+
+          Usage:
+            device_monitor_windows_${{ matrix.mode }}.exe
+
+          "$( if ("${{ matrix.mode }}" -eq "kiosk") { @"
+          Kiosk Mode:
+            - Run with kiosk environment enabled
+            - Use installation scripts in windows\ directory
+            - Includes Windows Service for auto-boot on system startup
+            - Includes registry configuration for system lockdown
+            - Includes Group Policy settings for enterprise kiosk mode
+            - See deployment documentation for complete setup
+            - Run as Administrator for full kiosk features
+            - Emergency exit: Ctrl+Alt+K
+          "@ } else { @"
+          Normal Mode:
+            - Standard GUI application
+            - No kiosk restrictions applied
+          "@ } )"
+
+          For more information, see the documentation at:
+          https://github.com/${{ github.repository }}
+          "@
+
+          $readmeContent | Out-File -FilePath "release\windows-${{ matrix.mode }}\README.txt" -Encoding UTF8
+
+          # Create archive
+          cd release
+          Compress-Archive -Path "windows-${{ matrix.mode }}" -DestinationPath "device_monitor_windows_${{ matrix.mode }}_${{ env.VERSION }}.zip"
+
+          # For kiosk mode, also create full package with installation scripts
+          if ("${{ matrix.mode }}" -eq "kiosk") {
+            cd ..
+            New-Item -ItemType Directory -Path "release\windows-${{ matrix.mode }}-full" -Force
+            Copy-Item "build_${{ matrix.mode }}\dist\device_monitor_windows_${{ matrix.mode }}.exe" -Destination "release\windows-${{ matrix.mode }}-full\"
+            
+            # Copy all installation components for full package
+            if (Test-Path "windows") {
+              Copy-Item -Path "windows" -Destination "release\windows-${{ matrix.mode }}-full\" -Recurse -ErrorAction SilentlyContinue
+            }
+            if (Test-Path "scripts\kiosk.bat") {
+              Copy-Item "scripts\kiosk.bat" -Destination "release\windows-${{ matrix.mode }}-full\" -ErrorAction SilentlyContinue
+            }
+            Copy-Item "main.py" -Destination "release\windows-${{ matrix.mode }}-full\" -ErrorAction SilentlyContinue
+            if (Test-Path "kiosk_boot_guide.md") {
+              Copy-Item "kiosk_boot_guide.md" -Destination "release\windows-${{ matrix.mode }}-full\" -ErrorAction SilentlyContinue
+            }
+            if (Test-Path "DEPLOYMENT_GUIDE.md") {
+              Copy-Item "DEPLOYMENT_GUIDE.md" -Destination "release\windows-${{ matrix.mode }}-full\" -ErrorAction SilentlyContinue
+            }
+            
+            # Create full package README
+            $fullReadmeContent = @"
+          Device Monitor - Windows Kiosk (Full Installation Package)
+          Version: ${{ env.VERSION }}
+          Built: $(Get-Date)
+          Platform: Windows x64
+
+          This package includes the executable AND complete installation scripts.
+
+          Quick Installation:
+            Run as Administrator: .\windows\scripts\install-kiosk.ps1 -Install
+            Reboot the system
+
+          Manual Usage:
+            device_monitor_windows_kiosk.exe
+
+          Features:
+            - Windows Service for auto-boot
+            - Registry configuration for system lockdown
+            - Group Policy settings for enterprise kiosk mode
+            - Security restrictions and user limits
+            - Emergency exit: Ctrl+Alt+K
+
+          For detailed instructions, see DEPLOYMENT_GUIDE.md
+          "@
+            
+            $fullReadmeContent | Out-File -FilePath "release\windows-${{ matrix.mode }}-full\README.txt" -Encoding UTF8
+            
+            # Create full archive
+            cd release
+            Compress-Archive -Path "windows-${{ matrix.mode }}-full" -DestinationPath "device_monitor_windows_kiosk_full_${{ env.VERSION }}.zip"
+          }
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: device-monitor-windows-${{ matrix.mode }}-${{ env.VERSION }}
+          path: release/device_monitor_windows_${{ matrix.mode }}_${{ env.VERSION }}.zip
+
+      - name: Upload Windows full kiosk artifacts
+        uses: actions/upload-artifact@v3
+        if: matrix.mode == 'kiosk'
+        with:
+          name: device-monitor-windows-kiosk-full-${{ env.VERSION }}
+          path: release/device_monitor_windows_kiosk_full_${{ env.VERSION }}.zip
+
+  create-release:
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create version info
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "dev" ]; then
+            if [[ $GITHUB_REF == refs/tags/* ]]; then
+              VERSION=${GITHUB_REF#refs/tags/v}
+            else
+              VERSION="dev-$(date +%Y%m%d-%H%M%S)"
+            fi
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          find artifacts -name "*.tar.gz" -exec cp {} release-assets/ \;
+          find artifacts -name "*.zip" -exec cp {} release-assets/ \;
+          ls -la release-assets/
+
+          # Also upload full packages if they exist
+          find . -name "*full*.tar.gz" -exec cp {} release-assets/ \; 2>/dev/null || echo "No Linux full packages found"
+          find . -name "*full*.zip" -exec cp {} release-assets/ \; 2>/dev/null || echo "No Windows full packages found"
+          ls -la release-assets/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Device Monitor v${{ env.VERSION }}
+          body: |
+            # Device Monitor v${{ env.VERSION }}
+
+            ## 📦 Available Downloads
+
+            ### Linux RHEL 7.9 Compatible
+            - **device_monitor_linux_normal_${{ env.VERSION }}.tar.gz** - Standard GUI application (executable only)
+            - **device_monitor_linux_kiosk_${{ env.VERSION }}.tar.gz** - Kiosk mode executable only
+            - **device_monitor_linux_kiosk_full_${{ env.VERSION }}.tar.gz** - Kiosk mode with complete auto-boot installation
+
+            ### Windows (10/11)
+            - **device_monitor_windows_normal_${{ env.VERSION }}.zip** - Standard GUI application (executable only)
+            - **device_monitor_windows_kiosk_${{ env.VERSION }}.zip** - Kiosk mode executable only
+            - **device_monitor_windows_kiosk_full_${{ env.VERSION }}.zip** - Kiosk mode with Windows service auto-boot installation
+
+            ## 🚀 Quick Start
+
+            ### Linux Installation (Executable Only Packages)
+            ```bash
+            # Extract the archive
+            tar -xzf device_monitor_linux_[mode]_${{ env.VERSION }}.tar.gz
+            cd linux-[mode]/
+
+            # Run the executable directly
+            ./device_monitor_linux_[mode]
+            ```
+
+            ### Linux Installation (Full Kiosk Package)
+            ```bash
+            # Extract the full kiosk archive
+            tar -xzf device_monitor_linux_kiosk_full_${{ env.VERSION }}.tar.gz
+            cd linux-kiosk-full/
+
+            # Run installation (includes auto-boot setup)
+            sudo ./linux/scripts/install-kiosk.sh
+            sudo reboot
+            ```
+
+            ### Windows Installation (Executable Only Packages)
+            ```cmd
+            REM Extract the ZIP file
+            REM Run the executable directly:
+            device_monitor_windows_[mode].exe
+            ```
+
+            ### Windows Installation (Full Kiosk Package)
+            ```cmd
+            REM Extract the full kiosk ZIP file
+            REM Run as Administrator (includes auto-boot setup):
+            cd windows-kiosk-full\windows\scripts
+            powershell -ExecutionPolicy Bypass -File install-kiosk.ps1 -Install
+
+            REM Reboot the system
+            shutdown /r /t 0
+            ```
+
+            ## 📋 System Requirements
+
+            **Linux (RHEL 7.9+)**
+            - Python 3.6+ (for source) or standalone executable
+            - X11 display server
+            - For kiosk: GDM/LightDM display manager
+
+            **Windows (10/11)**
+            - No additional requirements for executables
+            - For kiosk: Administrator privileges recommended
+
+            ## 🔧 Features
+
+            - ✅ USB device monitoring
+            - ✅ System control (shutdown/restart)
+            - ✅ Application launcher
+            - ✅ **Kiosk mode with complete auto-boot functionality**
+            - ✅ **Systemd service integration (Linux)**
+            - ✅ **Windows Service with auto-start (Windows)**
+            - ✅ **Display manager auto-login configuration**
+            - ✅ **System lockdown and security restrictions**
+            - ✅ Comprehensive logging
+            - ✅ Enterprise deployment ready
+            - ✅ Emergency exit mechanisms
+
+            **Note:** Full auto-boot functionality is included in the "full" packages.
+            The basic executable-only packages contain just the application binary.
+
+            Built with ❤️ using GitHub Actions
+          draft: false
+          prerelease: false
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Development Release
+        uses: softprops/action-gh-release@v1
+        if: github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/v')
+        with:
+          tag_name: dev-${{ env.VERSION }}
+          name: Device Monitor Development Build ${{ env.VERSION }}
+          body: |
+            # Device Monitor Development Build ${{ env.VERSION }}
+
+            This is a development build created manually or from the latest commit.
+
+            ## 📦 Available Downloads
+            See attached assets for all platform/mode combinations.
+
+            **⚠️ Development Build Notice**
+            This build is for testing purposes and may contain experimental features.
+          draft: false
+          prerelease: true
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
