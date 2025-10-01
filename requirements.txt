@@ -1,24 +1,4 @@
-# Basic requirements for the Device Monitor application
-# These will be installed during the CI/CD build process
-
-# GUI Framework (usually comes with Python)
-# tkinter is included with Python standard library
-
-# For Windows Service functionality (Windows builds only)
-pywin32>=227; sys_platform == "win32"
-
-# For packaging and building executables
+# GUARD Application Requirements
+tkinter
 pyinstaller>=5.0
-
-# Optional: Add any specific versions your application needs
-# threading, subprocess, os, time, queue, logging, pathlib, json are all standard library
-
-# If you need additional packages, add them here:
-# requests>=2.28.0
-# numpy>=1.21.0
-# pillow>=8.0.0
-
-# Development dependencies (optional)
-# pytest>=7.0.0
-# black>=22.0.0
-# flake8>=4.0.0
+Pillow>=8.0.0

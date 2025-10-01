@@ -1,0 +1,147 @@
+name: Build Executables and Packages for GUARD
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    name: Build for RHEL 7.9
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Build executable inside CentOS 7 container
+        uses: addnab/docker-run-action@v3
+        with:
+          image: centos:7
+          options: -v ${{ github.workspace }}:/src
+          run: |
+            set -e
+            # Fix CentOS 7 repo URLs
+            sed -i 's|mirrorlist=|#mirrorlist=|g' /etc/yum.repos.d/CentOS-*.repo
+            sed -i 's|#baseurl=http://mirror.centos.org/centos|baseurl=http://vault.centos.org/centos|g' /etc/yum.repos.d/CentOS-*.repo
+
+            yum -y update
+            yum -y install epel-release
+            yum -y install python3 python3-pip python3-devel gcc gcc-c++ make which \
+                           tk tcl python3-tkinter rpm-build
+
+            # Check Python version
+            python3 --version
+
+            pip3 install --upgrade pip setuptools wheel
+            pip3 install pyinstaller flake8
+
+            cd /src
+
+            # Lint the code
+            echo "Linting with flake8..."
+            flake8 . --count --exit-zero --max-line-length=127 --statistics
+            echo "✅ Linting complete."
+
+            # Test the script first
+            python3 -c "import main; print('Script syntax OK')"
+
+            # Build executable
+            export TCL_LIBRARY=/usr/share/tcl8.5
+            export TK_LIBRARY=/usr/share/tk8.5
+            pyinstaller --onefile --noconsole main.py -n guard_rhel7 \
+              --add-binary "/usr/lib64/libtcl8.5.so:." \
+              --add-binary "/usr/lib64/libtk8.5.so:." \
+              --add-data "/usr/share/tcl8.5:lib/tcl8.5" \
+              --add-data "/usr/share/tk8.5:lib/tk8.5" \
+              --add-data "assets:assets"
+            echo "✅ Linux build completed. Executable is at dist/guard_rhel7"
+
+      - name: Create RPM package
+        uses: addnab/docker-run-action@v3
+        with:
+          image: centos:7
+          options: -v ${{ github.workspace }}:/src
+          run: |
+            set -e
+            cd /src
+
+            # Copy executable to expected location for RPM build
+            cp dist/guard_rhel7 guard_rhel7
+
+            # Create RPM build directory structure
+            mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+
+            # Copy spec file
+            cp .github/rpm/device-monitor.spec ~/rpmbuild/SPECS/guard.spec
+
+            # Build RPM
+            rpmbuild -bb ~/rpmbuild/SPECS/guard.spec
+
+            # Copy RPM to dist directory
+            mkdir -p dist
+            cp ~/rpmbuild/RPMS/x86_64/guard-*.rpm dist/
+
+            echo "✅ RPM package created at dist/guard-*.rpm"
+
+      - name: Upload Linux Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: guard-linux
+          path: |
+            dist/guard_rhel7
+            dist/guard-*.rpm
+
+  build-windows:
+    name: Build for Windows
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.8"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller pillow pywin32
+
+      - name: Lint with flake8
+        run: |
+          pip install flake8
+          flake8 . --count --exit-zero --max-line-length=127 --statistics
+
+      - name: Test script
+        run: |
+          python -c "import main; print('Script syntax OK')"
+
+      - name: Build Windows executable
+        run: |
+          pyinstaller --onefile --noconsole --icon=assets/guard_icon.ico main.py -n guard
+          echo "✅ Windows executable built at dist/guard.exe"
+
+      - name: Install NSIS
+        run: |
+          choco install nsis -y
+
+      - name: Build Windows installer
+        run: |
+          mkdir -p dist
+          makensis guard_installer.nsi
+          echo "✅ Windows installer built at dist/guard-setup.exe"
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: guard-windows
+          path: |
+            dist/guard.exe
+            dist/guard-setup.exe
