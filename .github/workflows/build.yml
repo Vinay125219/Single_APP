@@ -74,13 +74,17 @@ jobs:
             set -e
             cd /src
 
+            # Copy executables to expected location for RPM build
+            cp dist/guard guard
+            cp dist/guard-kiosk guard-kiosk
+
             # Create RPM build directory structure
             mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 
             # Copy spec file
             cp .github/rpm/device-monitor.spec ~/rpmbuild/SPECS/guard.spec
 
-            # Build normal RPM
+            # Build RPM
             rpmbuild -bb ~/rpmbuild/SPECS/guard.spec
 
             # Copy RPM to dist directory
@@ -94,22 +98,28 @@ jobs:
           mkdir -p release/linux-normal
           mkdir -p release/linux-kiosk
 
-          # Copy normal mode executable
+          # Copy executables
           cp dist/guard release/linux-normal/
-
-          # Copy kiosk mode executable
           cp dist/guard-kiosk release/linux-kiosk/
 
-          # Copy RPM package to both directories
+          # Copy RPM packages
           cp dist/guard-*.rpm release/linux-normal/
           cp dist/guard-*.rpm release/linux-kiosk/
+
+      - name: List release contents
+        run: |
+          echo "=== Release directory contents ==="
+          ls -la release/
+          echo "=== Linux normal contents ==="
+          ls -la release/linux-normal/
+          echo "=== Linux kiosk contents ==="
+          ls -la release/linux-kiosk/
 
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: guard-linux
-          path: |
-            release/
+          path: release/
 
   build-windows:
     name: Build for Windows
@@ -135,6 +145,9 @@ jobs:
 
       - name: Build Windows executables
         run: |
+          # Create dist directory if it doesn't exist
+          mkdir -p dist
+
           # Build normal mode executable
           pyinstaller --onefile --noconsole --icon=assets/guard_icon.ico main.py -n guard
           echo "✅ Windows normal mode executable built at dist/guard.exe"
@@ -149,9 +162,17 @@ jobs:
 
       - name: Build Windows installers
         run: |
+          # Create dist directory if needed
+          mkdir -p dist
+
           # Build normal mode installer
           makensis guard_installer.nsi
           echo "✅ Windows normal mode installer built"
+
+          # Rename for clarity
+          if (Test-Path "dist\guard-setup.exe") {
+            Move-Item -Path "dist\guard-setup.exe" -Destination "dist\guard-setup-normal.exe"
+          }
 
           # Build kiosk mode installer
           makensis guard_kiosk_installer.nsi
@@ -162,17 +183,31 @@ jobs:
           mkdir -p release/windows-normal
           mkdir -p release/windows-kiosk
 
-          # Copy normal mode executable and installer
-          cp dist/guard.exe release/windows-normal/
-          cp dist/guard-setup-normal.exe release/windows-normal/
+          # Copy executables and installers
+          if (Test-Path "dist\guard.exe") {
+            Copy-Item -Path "dist\guard.exe" -Destination "release/windows-normal/"
+          }
+          if (Test-Path "dist\guard-setup-normal.exe") {
+            Copy-Item -Path "dist\guard-setup-normal.exe" -Destination "release/windows-normal/"
+          }
+          if (Test-Path "dist\guard-kiosk.exe") {
+            Copy-Item -Path "dist\guard-kiosk.exe" -Destination "release/windows-kiosk/"
+          }
+          if (Test-Path "dist\guard-setup-kiosk.exe") {
+            Copy-Item -Path "dist\guard-setup-kiosk.exe" -Destination "release/windows-kiosk/"
+          }
 
-          # Copy kiosk mode executable and installer
-          cp dist/guard-kiosk.exe release/windows-kiosk/
-          cp dist/guard-setup-kiosk.exe release/windows-kiosk/
+      - name: List release contents
+        run: |
+          echo "=== Release directory contents ==="
+          Get-ChildItem -Path release\
+          echo "=== Windows normal contents ==="
+          Get-ChildItem -Path release\windows-normal\
+          echo "=== Windows kiosk contents ==="
+          Get-ChildItem -Path release\windows-kiosk\
 
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: guard-windows
-          path: |
-            release/
+          path: release/
