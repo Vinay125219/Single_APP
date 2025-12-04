@@ -553,13 +553,24 @@ class DeviceMonitorGUI:
         self.root.geometry("800x600")
         self.root.configure(bg="#2c3e50")
 
-        # Set window icon
-        icon_path = Path(__file__).parent / "assets"
-        if platform.system() == "Windows":
-            icon_file = icon_path / "guard_icon.ico"
-        else:
-            icon_file = icon_path / "guard_icon.png"
+        # Set window icon with PyInstaller support
+        def get_resource_path(relative_path):
+            """Get absolute path to resource, works for dev and for PyInstaller."""
+            try:
+                # PyInstaller creates a temp folder and stores path in _MEIPASS
+                base_path = Path(sys._MEIPASS)
+            except AttributeError:
+                # Not running in PyInstaller, use normal path
+                base_path = Path(__file__).parent
+            return base_path / relative_path
         
+        # Determine icon file based on platform
+        if platform.system() == "Windows":
+            icon_file = get_resource_path("assets/guard_icon.ico")
+        else:
+            icon_file = get_resource_path("assets/guard_icon.png")
+        
+        # Try to set the window icon
         if icon_file.exists():
             try:
                 if platform.system() == "Windows":
@@ -567,8 +578,11 @@ class DeviceMonitorGUI:
                 else:
                     icon_image = tk.PhotoImage(file=str(icon_file))
                     self.root.iconphoto(True, icon_image)
+                logger.info(f"Window icon set successfully: {icon_file}")
             except Exception as e:
-                logger.warning(f"Failed to set window icon: {e}")
+                logger.warning(f"Failed to set window icon from {icon_file}: {e}")
+        else:
+            logger.warning(f"Icon file not found: {icon_file}")
 
         # Fullscreen by default, but can exit with Escape or F11
 

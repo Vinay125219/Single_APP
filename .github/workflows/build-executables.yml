@@ -20,39 +20,47 @@ env:
 jobs:
   build-linux:
     runs-on: ubuntu-latest
+    container:
+      image: centos:7
+      options: --privileged
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install system dependencies
+      - name: Install Git and dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            python3-tk \
-            python3-dev \
-            build-essential \
-            libffi-dev \
-            libbz2-dev \
-            libreadline-dev \
-            libsqlite3-dev \
-            libssl-dev \
-            zlib1g-dev \
-            libncurses5-dev \
-            libgdbm-dev \
-            libnss3-dev \
-            wget
+          yum install -y git wget gcc gcc-c++ make openssl-devel \
+            bzip2-devel libffi-devel zlib-devel readline-devel \
+            sqlite-devel tk-devel ncurses-devel gdbm-devel \
+            xz-devel expat-devel
+
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install Python 3.9
+        run: |
+          cd /tmp
+          wget https://www.python.org/ftp/python/3.9.18/Python-3.9.18.tgz
+          tar -xzf Python-3.9.18.tgz
+          cd Python-3.9.18
+          ./configure --enable-optimizations --with-ensurepip=install
+          make -j$(nproc)
+          make altinstall
+          ln -sf /usr/local/bin/python3.9 /usr/local/bin/python3
+          ln -sf /usr/local/bin/pip3.9 /usr/local/bin/pip3
+          python3 --version
+          pip3 --version
 
       - name: Install Python dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller
-          pip install -r requirements.txt
+          pip3 install --upgrade pip
+          pip3 install pyinstaller
+          if [ -f requirements.txt ]; then
+            pip3 install -r requirements.txt
+          fi
+
+      - name: Verify GLIBC version
+        run: |
+          echo "System GLIBC version:"
+          ldd --version | head -1
 
       - name: Create version info
         run: |
@@ -69,8 +77,8 @@ jobs:
 
       - name: Build executable with PyInstaller
         run: |
-          # Create PyInstaller spec file
-          cat > device_monitor.spec << EOF
+          # Create PyInstaller spec file with enhanced icon support
+          cat > device_monitor.spec <<'EOF'
           # -*- mode: python ; coding: utf-8 -*-
 
           block_cipher = None
@@ -127,14 +135,25 @@ jobs:
           )
           EOF
 
+          # Verify icon file exists
+          if [ ! -f "assets/guard_icon.png" ]; then
+            echo "❌ ERROR: Icon file not found: assets/guard_icon.png"
+            exit 1
+          fi
+          echo "✅ Icon file found: assets/guard_icon.png"
+
           # Build the executable
-          pyinstaller device_monitor.spec --clean --noconfirm
+          python3 -m PyInstaller device_monitor.spec --clean --noconfirm
 
           # Verify executable was created
           if [ -f "dist/GUARD" ]; then
             echo "✅ Successfully built GUARD"
             chmod +x "dist/GUARD"
             ls -lh "dist/GUARD"
+            
+            # Verify GLIBC compatibility
+            echo "Checking GLIBC dependencies:"
+            objdump -T dist/GUARD | grep GLIBC | sed 's/.*GLIBC_\([.0-9]*\).*/GLIBC_\1/g' | sort -Vu || true
           else
             echo "❌ Failed to build executable"
             exit 1
@@ -146,14 +165,20 @@ jobs:
           cp dist/GUARD release/linux/
 
           # Create README
-          cat > release/linux/README.txt << EOF
+          cat > release/linux/README.txt <<EOF
           GUARD Application - Linux Build
           Version: ${{ env.VERSION }}
           Built: $(date)
-          Platform: Linux x64
+          Platform: Linux x64 (CentOS 7 / RHEL 7.9+ Compatible)
+          GLIBC: 2.17 compatible
 
           Usage:
             ./GUARD
+
+          System Requirements:
+            - RHEL 7.9+ or CentOS 7+
+            - X11 display server
+            - GLIBC 2.17 or higher
 
           For more information, see the documentation at:
           https://github.com/${{ github.repository }}
@@ -164,7 +189,7 @@ jobs:
           tar -czf GUARD_linux_${{ env.VERSION }}.tar.gz linux/
 
       - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: GUARD-linux-${{ env.VERSION }}
           path: release/GUARD_linux_${{ env.VERSION }}.tar.gz
@@ -378,16 +403,68 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v3
         with:
           path: artifacts
 
-      - name: Prepare release assets
+      - name: Prepare unified release package
         run: |
+          mkdir -p GUARD_v${{ env.VERSION }}
+          
+          # Extract Linux build
+          if [ -f artifacts/GUARD-linux-${{ env.VERSION }}/GUARD_linux_${{ env.VERSION }}.tar.gz ]; then
+            tar -xzf artifacts/GUARD-linux-${{ env.VERSION }}/GUARD_linux_${{ env.VERSION }}.tar.gz -C GUARD_v${{ env.VERSION }}/
+          fi
+          
+          # Extract Windows build
+          if [ -f artifacts/GUARD-windows-${{ env.VERSION }}/GUARD_windows_${{ env.VERSION }}.zip ]; then
+            unzip -q artifacts/GUARD-windows-${{ env.VERSION }}/GUARD_windows_${{ env.VERSION }}.zip -d GUARD_v${{ env.VERSION }}/
+          fi
+          
+          # Create unified README
+          cat > GUARD_v${{ env.VERSION }}/README.txt <<'EOF'
+          ================================================
+          GUARD Application - Cross-Platform Release
+          Version: ${{ env.VERSION }}
+          Built: $(date)
+          ================================================
+          
+          This package contains GUARD executables for both Linux and Windows platforms.
+          
+          LINUX (RHEL 7.9+ / CentOS 7+):
+            - Located in: linux/
+            - Executable: linux/GUARD
+            - Requirements: X11 display server, GLIBC 2.17+
+            - Usage: cd linux && ./GUARD
+          
+          WINDOWS (10/11):
+            - Located in: windows/
+            - Executable: windows/GUARD.exe
+            - Requirements: Windows 10 or later
+            - Usage: Run windows\GUARD.exe
+          
+          FEATURES:
+            ✅ USB device monitoring
+            ✅ System control (shutdown/restart)
+            ✅ Application launcher
+            ✅ Comprehensive logging
+            ✅ Cross-platform support
+          
+          For more information and documentation:
+          https://github.com/${{ github.repository }}
+          ================================================
+          EOF
+          
+          # Create unified archive
           mkdir -p release-assets
-          find artifacts -name "*.tar.gz" -exec cp {} release-assets/ \;
-          find artifacts -name "*.zip" -exec cp {} release-assets/ \;
-          ls -la release-assets/
+          tar -czf release-assets/GUARD_v${{ env.VERSION }}_all-platforms.tar.gz GUARD_v${{ env.VERSION }}/
+          
+          # Also create a zip version for Windows users
+          zip -r -q release-assets/GUARD_v${{ env.VERSION }}_all-platforms.zip GUARD_v${{ env.VERSION }}/
+          
+          # List the contents
+          echo "Release package contents:"
+          ls -lh release-assets/
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -398,37 +475,38 @@ jobs:
           body: |
             # GUARD v${{ env.VERSION }}
 
-            ## 📦 Available Downloads
+            ## 📦 Unified Cross-Platform Package
 
-            ### Linux (RHEL 7.9+, Ubuntu)
-            - **GUARD_linux_${{ env.VERSION }}.tar.gz** - Linux executable
+            This release contains **both Linux and Windows executables** in a single download:
+            - **GUARD_v${{ env.VERSION }}_all-platforms.tar.gz** - For Linux/Unix systems
+            - **GUARD_v${{ env.VERSION }}_all-platforms.zip** - For Windows systems
 
-            ### Windows (10/11)
-            - **GUARD_windows_${{ env.VERSION }}.zip** - Windows executable
+            Both archives contain the same organized folder structure with executables for both platforms.
 
             ## 🚀 Quick Start
 
-            ### Linux Installation
+            ### Linux (RHEL 7.9+ / CentOS 7+)
             ```bash
             # Extract the archive
-            tar -xzf GUARD_linux_${{ env.VERSION }}.tar.gz
-            cd linux/
+            tar -xzf GUARD_v${{ env.VERSION }}_all-platforms.tar.gz
+            cd GUARD_v${{ env.VERSION }}/linux/
 
             # Run the executable
             ./GUARD
             ```
 
-            ### Windows Installation
+            ### Windows (10/11)
             ```cmd
             REM Extract the ZIP file
-            REM Run the executable:
-            GUARD.exe
+            REM Navigate to GUARD_v${{ env.VERSION }}\windows\
+            REM Run: GUARD.exe
             ```
 
             ## 📋 System Requirements
 
-            **Linux (RHEL 7.9+)**
+            **Linux (RHEL 7.9+ / CentOS 7+)**
             - X11 display server
+            - GLIBC 2.17 or higher
             - No additional dependencies required
 
             **Windows (10/11)**
@@ -441,6 +519,12 @@ jobs:
             - ✅ Application launcher
             - ✅ Comprehensive logging
             - ✅ Cross-platform support
+
+            ## 🔄 What's New in This Build
+
+            - **RHEL 7.9 Compatibility**: Linux executable now built on CentOS 7 with GLIBC 2.17
+            - **Icon Support**: Proper icon display on both platforms
+            - **Unified Package**: Both platforms in one convenient download
 
             Built with ❤️ using GitHub Actions
           draft: false
@@ -460,14 +544,21 @@ jobs:
 
             This is a development build created manually or from the latest commit.
 
-            ## 📦 Available Downloads
-            - Linux: GUARD_linux_${{ env.VERSION }}.tar.gz
-            - Windows: GUARD_windows_${{ env.VERSION }}.zip
+            ## 📦 Unified Package
+
+            Both Linux and Windows executables are included in single archives:
+            - **GUARD_v${{ env.VERSION }}_all-platforms.tar.gz** - For Linux/Unix
+            - **GUARD_v${{ env.VERSION }}_all-platforms.zip** - For Windows
 
             **⚠️ Development Build Notice**
             This build is for testing purposes and may contain experimental features.
+            
+            ## Platforms Included
+            - Linux: RHEL 7.9+ / CentOS 7+ compatible (GLIBC 2.17)
+            - Windows: 10/11
           draft: false
           prerelease: true
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
