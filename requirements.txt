@@ -1,4 +1,3 @@
 # GUARD Application Requirements
-tkinter
 pyinstaller>=5.0
 Pillow>=8.0.0

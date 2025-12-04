@@ -245,12 +245,8 @@ jobs:
             ./device_monitor_linux_${{ matrix.mode }}
 
           ${{ matrix.mode == 'kiosk' && 'Kiosk Mode:
-            - Run with kiosk environment enabled
-            - Use installation scripts in linux/ directory
-            - Includes systemd service for auto-boot on system startup
-            - Includes display manager configuration for auto-login
-            - Full kiosk lockdown with Openbox window manager
-            - See deployment documentation for complete setup
+            - Runs with kiosk environment enabled (KIOSK=1)
+            - Kiosk UI restrictions applied
             - Emergency exit: Ctrl+Alt+Shift+Q
           ' || 'Normal Mode:
             - Standard GUI application
@@ -315,12 +311,7 @@ jobs:
           name: device-monitor-linux-${{ matrix.mode }}-${{ env.VERSION }}
           path: release/device_monitor_linux_${{ matrix.mode }}_${{ env.VERSION }}.tar.gz
 
-      - name: Upload Linux full kiosk artifacts
-        uses: actions/upload-artifact@v4
-        if: matrix.mode == 'kiosk'
-        with:
-          name: device-monitor-linux-kiosk-full-${{ env.VERSION }}
-          path: release/device_monitor_linux_kiosk_full_${{ env.VERSION }}.tar.gz
+
 
   build-windows:
     runs-on: windows-latest
@@ -379,15 +370,8 @@ jobs:
           # Copy main application
           shutil.copy2("main.py", build_dir / "main.py")
 
-          # Copy Windows service if kiosk mode
-          mode = "${{ matrix.mode }}"
-          if mode == "kiosk":
-              try:
-                  shutil.copy2("windows/service/windows_service.py", build_dir / "windows_service.py")
-              except:
-                  print("Warning: windows_service.py not found, creating placeholder")
-
           # Create mode-specific wrapper
+          mode = "${{ matrix.mode }}"
           if mode == "kiosk":
               wrapper_content = '''
           import os
@@ -595,13 +579,8 @@ jobs:
 
           "$( if ("${{ matrix.mode }}" -eq "kiosk") { @"
           Kiosk Mode:
-            - Run with kiosk environment enabled
-            - Use installation scripts in windows\ directory
-            - Includes Windows Service for auto-boot on system startup
-            - Includes registry configuration for system lockdown
-            - Includes Group Policy settings for enterprise kiosk mode
-            - See deployment documentation for complete setup
-            - Run as Administrator for full kiosk features
+            - Runs with kiosk environment enabled (KIOSK=1)
+            - Kiosk UI restrictions applied
             - Emergency exit: Ctrl+Alt+K
           "@ } else { @"
           Normal Mode:
@@ -619,59 +598,7 @@ jobs:
           cd release
           Compress-Archive -Path "windows-${{ matrix.mode }}" -DestinationPath "device_monitor_windows_${{ matrix.mode }}_${{ env.VERSION }}.zip"
 
-          # For kiosk mode, also create full package with installation scripts
-          if ("${{ matrix.mode }}" -eq "kiosk") {
-            cd ..
-            New-Item -ItemType Directory -Path "release\windows-${{ matrix.mode }}-full" -Force
-            Copy-Item "build_${{ matrix.mode }}\dist\device_monitor_windows_${{ matrix.mode }}.exe" -Destination "release\windows-${{ matrix.mode }}-full\"
-            
-            # Copy all installation components for full package
-            if (Test-Path "windows") {
-              Copy-Item -Path "windows" -Destination "release\windows-${{ matrix.mode }}-full\" -Recurse -ErrorAction SilentlyContinue
-            }
-            if (Test-Path "scripts\kiosk.bat") {
-              Copy-Item "scripts\kiosk.bat" -Destination "release\windows-${{ matrix.mode }}-full\" -ErrorAction SilentlyContinue
-            }
-            Copy-Item "main.py" -Destination "release\windows-${{ matrix.mode }}-full\" -ErrorAction SilentlyContinue
-            if (Test-Path "kiosk_boot_guide.md") {
-              Copy-Item "kiosk_boot_guide.md" -Destination "release\windows-${{ matrix.mode }}-full\" -ErrorAction SilentlyContinue
-            }
-            if (Test-Path "DEPLOYMENT_GUIDE.md") {
-              Copy-Item "DEPLOYMENT_GUIDE.md" -Destination "release\windows-${{ matrix.mode }}-full\" -ErrorAction SilentlyContinue
-            }
-            
-            # Create full package README
-            $fullReadmeContent = @"
-          Device Monitor - Windows Kiosk (Full Installation Package)
-          Version: ${{ env.VERSION }}
-          Built: $(Get-Date)
-          Platform: Windows x64
 
-          This package includes the executable AND complete installation scripts.
-
-          Quick Installation:
-            Run as Administrator: .\windows\scripts\install-kiosk.ps1 -Install
-            Reboot the system
-
-          Manual Usage:
-            device_monitor_windows_kiosk.exe
-
-          Features:
-            - Windows Service for auto-boot
-            - Registry configuration for system lockdown
-            - Group Policy settings for enterprise kiosk mode
-            - Security restrictions and user limits
-            - Emergency exit: Ctrl+Alt+K
-
-          For detailed instructions, see DEPLOYMENT_GUIDE.md
-          "@
-            
-            $fullReadmeContent | Out-File -FilePath "release\windows-${{ matrix.mode }}-full\README.txt" -Encoding UTF8
-            
-            # Create full archive
-            cd release
-            Compress-Archive -Path "windows-${{ matrix.mode }}-full" -DestinationPath "device_monitor_windows_kiosk_full_${{ env.VERSION }}.zip"
-          }
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -679,12 +606,8 @@ jobs:
           name: device-monitor-windows-${{ matrix.mode }}-${{ env.VERSION }}
           path: release/device_monitor_windows_${{ matrix.mode }}_${{ env.VERSION }}.zip
 
-      - name: Upload Windows full kiosk artifacts
-        uses: actions/upload-artifact@v4
-        if: matrix.mode == 'kiosk'
-        with:
-          name: device-monitor-windows-kiosk-full-${{ env.VERSION }}
-          path: release/device_monitor_windows_kiosk_full_${{ env.VERSION }}.zip
+
+
 
   create-release:
     needs: [build-linux, build-windows]
@@ -708,7 +631,7 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           path: artifacts
 
@@ -717,11 +640,6 @@ jobs:
           mkdir -p release-assets
           find artifacts -name "*.tar.gz" -exec cp {} release-assets/ \;
           find artifacts -name "*.zip" -exec cp {} release-assets/ \;
-          ls -la release-assets/
-
-          # Also upload full packages if they exist
-          find . -name "*full*.tar.gz" -exec cp {} release-assets/ \; 2>/dev/null || echo "No Linux full packages found"
-          find . -name "*full*.zip" -exec cp {} release-assets/ \; 2>/dev/null || echo "No Windows full packages found"
           ls -la release-assets/
 
       - name: Create Release
@@ -735,55 +653,32 @@ jobs:
 
             ## 📦 Available Downloads
 
+
             ### Linux RHEL 7.9 Compatible
-            - **device_monitor_linux_normal_${{ env.VERSION }}.tar.gz** - Standard GUI application (executable only)
-            - **device_monitor_linux_kiosk_${{ env.VERSION }}.tar.gz** - Kiosk mode executable only
-            - **device_monitor_linux_kiosk_full_${{ env.VERSION }}.tar.gz** - Kiosk mode with complete auto-boot installation
+            - **device_monitor_linux_normal_${{ env.VERSION }}.tar.gz** - Standard GUI application
+            - **device_monitor_linux_kiosk_${{ env.VERSION }}.tar.gz** - Kiosk mode with UI restrictions
 
             ### Windows (10/11)
-            - **device_monitor_windows_normal_${{ env.VERSION }}.zip** - Standard GUI application (executable only)
-            - **device_monitor_windows_kiosk_${{ env.VERSION }}.zip** - Kiosk mode executable only
-            - **device_monitor_windows_kiosk_full_${{ env.VERSION }}.zip** - Kiosk mode with Windows service auto-boot installation
+            - **device_monitor_windows_normal_${{ env.VERSION }}.zip** - Standard GUI application
+            - **device_monitor_windows_kiosk_${{ env.VERSION }}.zip** - Kiosk mode with UI restrictions
 
             ## 🚀 Quick Start
 
-            ### Linux Installation (Executable Only Packages)
+            ### Linux Installation
             ```bash
             # Extract the archive
             tar -xzf device_monitor_linux_[mode]_${{ env.VERSION }}.tar.gz
             cd linux-[mode]/
 
-            # Run the executable directly
+            # Run the executable
             ./device_monitor_linux_[mode]
             ```
 
-            ### Linux Installation (Full Kiosk Package)
-            ```bash
-            # Extract the full kiosk archive
-            tar -xzf device_monitor_linux_kiosk_full_${{ env.VERSION }}.tar.gz
-            cd linux-kiosk-full/
-
-            # Run installation (includes auto-boot setup)
-            sudo ./linux/scripts/install-kiosk.sh
-            sudo reboot
-            ```
-
-            ### Windows Installation (Executable Only Packages)
+            ### Windows Installation
             ```cmd
             REM Extract the ZIP file
-            REM Run the executable directly:
+            REM Run the executable:
             device_monitor_windows_[mode].exe
-            ```
-
-            ### Windows Installation (Full Kiosk Package)
-            ```cmd
-            REM Extract the full kiosk ZIP file
-            REM Run as Administrator (includes auto-boot setup):
-            cd windows-kiosk-full\windows\scripts
-            powershell -ExecutionPolicy Bypass -File install-kiosk.ps1 -Install
-
-            REM Reboot the system
-            shutdown /r /t 0
             ```
 
             ## 📋 System Requirements
@@ -802,17 +697,9 @@ jobs:
             - ✅ USB device monitoring
             - ✅ System control (shutdown/restart)
             - ✅ Application launcher
-            - ✅ **Kiosk mode with complete auto-boot functionality**
-            - ✅ **Systemd service integration (Linux)**
-            - ✅ **Windows Service with auto-start (Windows)**
-            - ✅ **Display manager auto-login configuration**
-            - ✅ **System lockdown and security restrictions**
+            - ✅ Kiosk mode with UI restrictions
             - ✅ Comprehensive logging
-            - ✅ Enterprise deployment ready
-            - ✅ Emergency exit mechanisms
-
-            **Note:** Full auto-boot functionality is included in the "full" packages.
-            The basic executable-only packages contain just the application binary.
+            - ✅ Emergency exit mechanisms (Ctrl+Alt+Shift+Q for Linux, Ctrl+Alt+K for Windows)
 
             Built with ❤️ using GitHub Actions
           draft: false

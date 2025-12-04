@@ -8,7 +8,7 @@ Release:        %{_release}.el7
 Summary:        GUARD - General USB Automated Response and Device monitoring
 License:        MIT
 URL:            https://github.com/guard/guard
-Source0:        guard_rhel7
+Source0:        device_monitor_rhel7
 
 %description
 GUARD is a Python tkinter-based GUI application for USB device monitoring and system control.
