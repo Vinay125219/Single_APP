@@ -26,8 +26,10 @@ if platform.system() == "Windows":
         import winreg
         import win32gui
         import win32con
+        # For hiding console windows
+        CREATE_NO_WINDOW = 0x08000000
     except ImportError:
-        pass
+        CREATE_NO_WINDOW = 0x08000000
 
 # Configure logging
 logging.basicConfig(
@@ -68,7 +70,11 @@ class USBMonitor:
                     f"Get-PnpDevice | Where-Object {{$_.InstanceId -like '*VID_{vendor_id.upper()}*PID_{product_id.upper()}*'}}",
                 ]
                 result = subprocess.run(
-                    cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10
+                    cmd, 
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.PIPE, 
+                    timeout=10,
+                    creationflags=CREATE_NO_WINDOW if platform.system() == "Windows" else 0
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     return True
@@ -115,6 +121,7 @@ class USBMonitor:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     timeout=10,
+                    creationflags=CREATE_NO_WINDOW if platform.system() == "Windows" else 0
                 )
                 if result.returncode != 0:
                     return []
@@ -304,6 +311,7 @@ class SystemController:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=5,
+                creationflags=CREATE_NO_WINDOW if platform.system() == "Windows" else 0
             )
             return result.returncode == 0
         except subprocess.SubprocessError:
@@ -318,6 +326,7 @@ class SystemController:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=5,
+                creationflags=CREATE_NO_WINDOW if platform.system() == "Windows" else 0
             )
             return result.returncode != 0
         except subprocess.SubprocessError:
@@ -388,11 +397,14 @@ class SystemController:
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         timeout=5,
+                        creationflags=CREATE_NO_WINDOW if platform.system() == "Windows" else 0
                     )
                     if result.returncode != 0:
                         continue
 
-                subprocess.Popen(cmd)
+                # Create process with no console window on Windows
+                creation_flags = CREATE_NO_WINDOW if platform.system() == "Windows" else 0
+                subprocess.Popen(cmd, creationflags=creation_flags)
                 logger.info(f"System {action} initiated with command: {' '.join(cmd)}")
                 return True
             except subprocess.SubprocessError as e:
@@ -438,9 +450,11 @@ class ApplicationLauncher:
             # Launch with appropriate method for platform
             if platform.system() == "Windows":
                 self.current_process = subprocess.Popen(
-                    ["cmd", "/c", "start", "", executable_path],
+                    [executable_path],
                     cwd=working_dir,
-                    shell=True,
+                    creationflags=CREATE_NO_WINDOW,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                 )
             else:
                 self.current_process = subprocess.Popen(
@@ -505,6 +519,7 @@ class ApplicationLauncher:
                     ["taskkill", "/F", "/PID", str(self.current_process.pid)],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    creationflags=CREATE_NO_WINDOW
                 )
             else:
                 # Linux termination
