@@ -1,4 +1,4 @@
-name: Build Device Monitor Executables
+name: Build GUARD Executables
 
 on:
   push:
@@ -15,7 +15,7 @@ on:
 
 env:
   PYTHON_VERSION: "3.9"
-  APP_NAME: "device_monitor"
+  APP_NAME: "GUARD"
 
 jobs:
   build-linux:
@@ -79,7 +79,7 @@ jobs:
               ['main.py'],
               pathex=['.'],
               binaries=[],
-              datas=[],
+              datas=[('assets/guard_icon.png', 'assets')],
               hiddenimports=[
                   'tkinter',
                   'tkinter.ttk',
@@ -111,7 +111,7 @@ jobs:
               a.zipfiles,
               a.datas,
               [],
-              name='device_monitor_linux',
+              name='GUARD',
               debug=False,
               bootloader_ignore_signals=False,
               strip=False,
@@ -131,10 +131,10 @@ jobs:
           pyinstaller device_monitor.spec --clean --noconfirm
 
           # Verify executable was created
-          if [ -f "dist/device_monitor_linux" ]; then
-            echo "✅ Successfully built device_monitor_linux"
-            chmod +x "dist/device_monitor_linux"
-            ls -lh "dist/device_monitor_linux"
+          if [ -f "dist/GUARD" ]; then
+            echo "✅ Successfully built GUARD"
+            chmod +x "dist/GUARD"
+            ls -lh "dist/GUARD"
           else
             echo "❌ Failed to build executable"
             exit 1
@@ -143,17 +143,17 @@ jobs:
       - name: Create release package
         run: |
           mkdir -p release/linux
-          cp dist/device_monitor_linux release/linux/
+          cp dist/GUARD release/linux/
 
           # Create README
           cat > release/linux/README.txt << EOF
-          Device Monitor - Linux Build
+          GUARD Application - Linux Build
           Version: ${{ env.VERSION }}
           Built: $(date)
           Platform: Linux x64
 
           Usage:
-            ./device_monitor_linux
+            ./GUARD
 
           For more information, see the documentation at:
           https://github.com/${{ github.repository }}
@@ -161,13 +161,13 @@ jobs:
 
           # Create archive
           cd release
-          tar -czf device_monitor_linux_${{ env.VERSION }}.tar.gz linux/
+          tar -czf GUARD_linux_${{ env.VERSION }}.tar.gz linux/
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: device-monitor-linux-${{ env.VERSION }}
-          path: release/device_monitor_linux_${{ env.VERSION }}.tar.gz
+          name: GUARD-linux-${{ env.VERSION }}
+          path: release/GUARD_linux_${{ env.VERSION }}.tar.gz
 
   build-windows:
     runs-on: windows-latest
@@ -252,7 +252,7 @@ jobs:
               ['main.py'],
               pathex=['.'],
               binaries=[],
-              datas=[],
+              datas=[('assets/guard_icon.ico', 'assets')],
               hiddenimports=[
                   'tkinter',
                   'tkinter.ttk',
@@ -293,7 +293,7 @@ jobs:
               a.zipfiles,
               a.datas,
               [],
-              name='device_monitor_windows',
+              name='GUARD',
               debug=False,
               bootloader_ignore_signals=False,
               strip=False,
@@ -307,7 +307,7 @@ jobs:
               codesign_identity=None,
               entitlements_file=None,
               version='version_info.py',
-              icon=None,
+              icon='assets/guard_icon.ico',
           )
           "@
 
@@ -317,9 +317,9 @@ jobs:
           pyinstaller "device_monitor.spec" --clean --noconfirm
 
           # Verify executable was created
-          if (Test-Path "dist\device_monitor_windows.exe") {
-            Write-Output "✅ Successfully built device_monitor_windows.exe"
-            Get-ChildItem "dist\device_monitor_windows.exe" | Format-List
+          if (Test-Path "dist\GUARD.exe") {
+            Write-Output "✅ Successfully built GUARD.exe"
+            Get-ChildItem "dist\GUARD.exe" | Format-List
           } else {
             Write-Output "❌ Failed to build executable"
             exit 1
@@ -328,17 +328,17 @@ jobs:
       - name: Create release package
         run: |
           New-Item -ItemType Directory -Path "release\windows" -Force
-          Copy-Item "dist\device_monitor_windows.exe" -Destination "release\windows\"
+          Copy-Item "dist\GUARD.exe" -Destination "release\windows\"
 
           # Create README
           $readmeContent = @"
-          Device Monitor - Windows Build
+          GUARD Application - Windows Build
           Version: ${{ env.VERSION }}
           Built: $(Get-Date)
           Platform: Windows x64
 
           Usage:
-            device_monitor_windows.exe
+            GUARD.exe
 
           For more information, see the documentation at:
           https://github.com/${{ github.repository }}
@@ -348,13 +348,13 @@ jobs:
 
           # Create archive
           cd release
-          Compress-Archive -Path "windows" -DestinationPath "device_monitor_windows_${{ env.VERSION }}.zip"
+          Compress-Archive -Path "windows" -DestinationPath "GUARD_windows_${{ env.VERSION }}.zip"
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: device-monitor-windows-${{ env.VERSION }}
-          path: release/device_monitor_windows_${{ env.VERSION }}.zip
+          name: GUARD-windows-${{ env.VERSION }}
+          path: release/GUARD_windows_${{ env.VERSION }}.zip
 
   create-release:
     needs: [build-linux, build-windows]
@@ -394,35 +394,35 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           tag_name: ${{ github.ref_name }}
-          name: Device Monitor v${{ env.VERSION }}
+          name: GUARD v${{ env.VERSION }}
           body: |
-            # Device Monitor v${{ env.VERSION }}
+            # GUARD v${{ env.VERSION }}
 
             ## 📦 Available Downloads
 
             ### Linux (RHEL 7.9+, Ubuntu)
-            - **device_monitor_linux_${{ env.VERSION }}.tar.gz** - Linux executable
+            - **GUARD_linux_${{ env.VERSION }}.tar.gz** - Linux executable
 
             ### Windows (10/11)
-            - **device_monitor_windows_${{ env.VERSION }}.zip** - Windows executable
+            - **GUARD_windows_${{ env.VERSION }}.zip** - Windows executable
 
             ## 🚀 Quick Start
 
             ### Linux Installation
             ```bash
             # Extract the archive
-            tar -xzf device_monitor_linux_${{ env.VERSION }}.tar.gz
+            tar -xzf GUARD_linux_${{ env.VERSION }}.tar.gz
             cd linux/
 
             # Run the executable
-            ./device_monitor_linux
+            ./GUARD
             ```
 
             ### Windows Installation
             ```cmd
             REM Extract the ZIP file
             REM Run the executable:
-            device_monitor_windows.exe
+            GUARD.exe
             ```
 
             ## 📋 System Requirements
@@ -454,15 +454,15 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/v')
         with:
           tag_name: dev-${{ env.VERSION }}
-          name: Device Monitor Development Build ${{ env.VERSION }}
+          name: GUARD Development Build ${{ env.VERSION }}
           body: |
-            # Device Monitor Development Build ${{ env.VERSION }}
+            # GUARD Development Build ${{ env.VERSION }}
 
             This is a development build created manually or from the latest commit.
 
             ## 📦 Available Downloads
-            - Linux: device_monitor_linux_${{ env.VERSION }}.tar.gz
-            - Windows: device_monitor_windows_${{ env.VERSION }}.zip
+            - Linux: GUARD_linux_${{ env.VERSION }}.tar.gz
+            - Windows: GUARD_windows_${{ env.VERSION }}.zip
 
             **⚠️ Development Build Notice**
             This build is for testing purposes and may contain experimental features.

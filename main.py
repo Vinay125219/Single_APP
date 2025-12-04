@@ -3,7 +3,7 @@
 """
 GUARD - General USB Automated Response and Device monitoring
 A Python tkinter-based GUI application for USB device monitoring and system control
-Compatible with RHEL 7.9 and Windows - Kiosk Mode Enabled
+Compatible with RHEL 7.9 and Windows
 """
 
 import tkinter as tk
@@ -37,8 +37,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Global variable to track kiosk mode
-KIOSK_MODE = "--kiosk" in sys.argv
+
 
 
 class USBMonitor:
@@ -403,72 +402,7 @@ class SystemController:
         logger.error(f"All {action} commands failed")
         return False
 
-    @classmethod
-    def enable_kiosk_mode_windows(cls):
-        """Enable kiosk mode on Windows"""
-        try:
-            # This is a simplified implementation
-            # In a real application, you would use Windows Group Policy or other methods
-            logger.info("Windows kiosk mode enabled")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to enable Windows kiosk mode: {e}")
-            return False
 
-    @classmethod
-    def disable_kiosk_mode_windows(cls):
-        """Disable kiosk mode on Windows"""
-        try:
-            # This is a simplified implementation
-            logger.info("Windows kiosk mode disabled")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to disable Windows kiosk mode: {e}")
-            return False
-
-    @classmethod
-    def enable_kiosk_mode_linux(cls):
-        """Enable kiosk mode on Linux by creating autostart entry"""
-        try:
-            # Create autostart directory if it doesn't exist
-            autostart_dir = os.path.expanduser("~/.config/autostart")
-            os.makedirs(autostart_dir, exist_ok=True)
-
-            # Create desktop entry for kiosk mode
-            desktop_entry = f"""[Desktop Entry]
-Type=Application
-Name=GUARD Kiosk Mode
-Comment=Device Monitor Application in Kiosk Mode
-Exec={sys.executable} --kiosk
-Icon=guard-icon
-Terminal=false
-Categories=Utility;
-X-GNOME-Autostart-enabled=true
-"""
-
-            desktop_file = os.path.join(autostart_dir, "guard-kiosk.desktop")
-            with open(desktop_file, "w") as f:
-                f.write(desktop_entry)
-
-            logger.info("Linux kiosk mode enabled")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to enable Linux kiosk mode: {e}")
-            return False
-
-    @classmethod
-    def disable_kiosk_mode_linux(cls):
-        """Disable kiosk mode on Linux by removing autostart entry"""
-        try:
-            desktop_file = os.path.expanduser("~/.config/autostart/guard-kiosk.desktop")
-            if os.path.exists(desktop_file):
-                os.remove(desktop_file)
-
-            logger.info("Linux kiosk mode disabled")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to disable Linux kiosk mode: {e}")
-            return False
 
 
 class ApplicationLauncher:
@@ -600,21 +534,33 @@ class DeviceMonitorGUI:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("GUARD - Device Monitor Application")
+        self.root.title("GUARD Application")
         self.root.geometry("800x600")
         self.root.configure(bg="#2c3e50")
 
-        # Kiosk mode setup
-        if KIOSK_MODE:
-            self.setup_kiosk_mode()
+        # Set window icon
+        icon_path = Path(__file__).parent / "assets"
+        if platform.system() == "Windows":
+            icon_file = icon_path / "guard_icon.ico"
         else:
-            # Make fullscreen toggleable in normal mode
-            self.root.attributes("-fullscreen", True)
-            self.root.bind("<Escape>", self.toggle_fullscreen)
-            self.root.bind("<F11>", self.toggle_fullscreen)
+            icon_file = icon_path / "guard_icon.png"
+        
+        if icon_file.exists():
+            try:
+                if platform.system() == "Windows":
+                    self.root.iconbitmap(str(icon_file))
+                else:
+                    icon_image = tk.PhotoImage(file=str(icon_file))
+                    self.root.iconphoto(True, icon_image)
+            except Exception as e:
+                logger.warning(f"Failed to set window icon: {e}")
+
+        # Fullscreen by default, but can exit with Escape or F11
 
         # Application state
-        self.identification_enabled = True
+        self.root.attributes("-fullscreen", True)
+        self.root.bind("<Escape>", self.toggle_fullscreen)
+        self.root.bind("<F11>", self.toggle_fullscreen)
         self.selected_executable = ""
         self.device_status = {}
 
@@ -639,47 +585,10 @@ class DeviceMonitorGUI:
         # Cleanup on close
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-    def setup_kiosk_mode(self):
-        """Setup kiosk mode restrictions"""
-        # Remove window decorations
-        self.root.overrideredirect(True)
-
-        # Bind kiosk-specific keys
-        self.root.bind(
-            "<Control-Shift-K>", self.disable_kiosk_mode
-        )  # Hidden key combo to exit
-
-        # Disable common key combinations that could exit the application
-        self.root.bind("<Alt-F4>", lambda e: "break")
-        self.root.bind("<Control-w>", lambda e: "break")
-        self.root.bind("<Control-q>", lambda e: "break")
-
-        # Platform-specific kiosk setup
-        if platform.system() == "Windows":
-            SystemController.enable_kiosk_mode_windows()
-        elif platform.system() == "Linux":
-            SystemController.enable_kiosk_mode_linux()
-
     def toggle_fullscreen(self, event=None):
-        """Toggle fullscreen mode (only in non-kiosk mode)"""
-        if not KIOSK_MODE:
-            is_fullscreen = self.root.attributes("-fullscreen")
-            self.root.attributes("-fullscreen", not is_fullscreen)
-
-    def disable_kiosk_mode(self, event=None):
-        """Disable kiosk mode with hidden key combination"""
-        if KIOSK_MODE:
-            if messagebox.askyesno(
-                "Exit Kiosk Mode", "Are you sure you want to exit kiosk mode?"
-            ):
-                # Restore system settings
-                if platform.system() == "Windows":
-                    SystemController.disable_kiosk_mode_windows()
-                elif platform.system() == "Linux":
-                    SystemController.disable_kiosk_mode_linux()
-
-                # Exit application
-                self.on_closing()
+        """Toggle fullscreen mode"""
+        is_fullscreen = self.root.attributes("-fullscreen")
+        self.root.attributes("-fullscreen", not is_fullscreen)
 
     def create_widgets(self):
         """Create all GUI widgets"""
@@ -689,8 +598,8 @@ class DeviceMonitorGUI:
 
         # Title
         title_label = tk.Label(
-            main_frame,
-            text="GUARD - Device Monitor Application",
+        main_frame,
+            text="GUARD Application",
             font=("Arial", 24, "bold"),
             bg="#2c3e50",
             fg="white",
@@ -792,16 +701,6 @@ class DeviceMonitorGUI:
         )
         toggle_btn.pack(anchor="w")
 
-        # Kiosk mode indicator
-        if KIOSK_MODE:
-            kiosk_label = tk.Label(
-                control_frame,
-                text="KIOSK MODE ACTIVE",
-                font=("Arial", 10, "bold"),
-                bg="#e74c3c",
-                fg="white",
-            )
-            kiosk_label.pack(anchor="w", pady=(5, 0))
 
     def create_file_frame(self, parent):
         """Create file selection frame"""
@@ -949,34 +848,7 @@ class DeviceMonitorGUI:
         )
         exit_btn.pack(side="left", padx=10)
 
-        # Add kiosk mode toggle in normal mode
-        if not KIOSK_MODE:
-            kiosk_btn = tk.Button(
-                button_frame,
-                text="Enable Kiosk Mode",
-                command=self.enable_kiosk_mode,
-                font=("Arial", 12, "bold"),
-                bg="#9b59b6",
-                fg="white",
-                width=15,
-                height=2,
-            )
-            kiosk_btn.pack(side="left", padx=10)
 
-    def enable_kiosk_mode(self):
-        """Enable kiosk mode from normal mode"""
-        if messagebox.askyesno(
-            "Enable Kiosk Mode",
-            "Enabling kiosk mode will restart the application in kiosk mode. Continue?",
-        ):
-            # Restart application with kiosk flag
-            if platform.system() == "Windows":
-                subprocess.Popen([sys.executable, "--kiosk"], close_fds=True)
-            else:
-                subprocess.Popen([sys.executable, "--kiosk"], close_fds=True)
-
-            # Close current instance
-            self.on_closing()
 
     def start_monitoring(self):
         """Start USB monitoring thread"""
@@ -1269,13 +1141,6 @@ class DeviceMonitorGUI:
         try:
             # Stop monitoring
             self.usb_monitor.stop_monitoring()
-
-            # Disable kiosk mode if enabled
-            if KIOSK_MODE:
-                if platform.system() == "Windows":
-                    SystemController.disable_kiosk_mode_windows()
-                elif platform.system() == "Linux":
-                    SystemController.disable_kiosk_mode_linux()
 
             logger.info("Application closing")
             self.root.quit()
