@@ -1,4 +1,4 @@
-name: Build GUARD Executables
+name: Build Device Monitor Executables
 
 on:
   push:
@@ -15,52 +15,44 @@ on:
 
 env:
   PYTHON_VERSION: "3.9"
-  APP_NAME: "GUARD"
+  APP_NAME: "device_monitor"
 
 jobs:
   build-linux:
     runs-on: ubuntu-latest
-    container:
-      image: centos:7
-      options: --privileged
 
     steps:
-      - name: Install Git and dependencies
-        run: |
-          yum install -y git wget gcc gcc-c++ make openssl-devel \
-            bzip2-devel libffi-devel zlib-devel readline-devel \
-            sqlite-devel tk-devel ncurses-devel gdbm-devel \
-            xz-devel expat-devel
-
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Install Python 3.9
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install system dependencies
         run: |
-          cd /tmp
-          wget https://www.python.org/ftp/python/3.9.18/Python-3.9.18.tgz
-          tar -xzf Python-3.9.18.tgz
-          cd Python-3.9.18
-          ./configure --enable-optimizations --with-ensurepip=install
-          make -j$(nproc)
-          make altinstall
-          ln -sf /usr/local/bin/python3.9 /usr/local/bin/python3
-          ln -sf /usr/local/bin/pip3.9 /usr/local/bin/pip3
-          python3 --version
-          pip3 --version
+          sudo apt-get update
+          sudo apt-get install -y \
+            python3-tk \
+            python3-dev \
+            build-essential \
+            libffi-dev \
+            libbz2-dev \
+            libreadline-dev \
+            libsqlite3-dev \
+            libssl-dev \
+            zlib1g-dev \
+            libncurses5-dev \
+            libgdbm-dev \
+            libnss3-dev \
+            wget
 
       - name: Install Python dependencies
         run: |
-          pip3 install --upgrade pip
-          pip3 install pyinstaller
-          if [ -f requirements.txt ]; then
-            pip3 install -r requirements.txt
-          fi
-
-      - name: Verify GLIBC version
-        run: |
-          echo "System GLIBC version:"
-          ldd --version | head -1
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r requirements.txt
 
       - name: Create version info
         run: |
@@ -77,8 +69,8 @@ jobs:
 
       - name: Build executable with PyInstaller
         run: |
-          # Create PyInstaller spec file with enhanced icon support
-          cat > device_monitor.spec <<'EOF'
+          # Create PyInstaller spec file
+          cat > device_monitor.spec << EOF
           # -*- mode: python ; coding: utf-8 -*-
 
           block_cipher = None
@@ -87,7 +79,7 @@ jobs:
               ['main.py'],
               pathex=['.'],
               binaries=[],
-              datas=[('assets/guard_icon.png', 'assets')],
+              datas=[],
               hiddenimports=[
                   'tkinter',
                   'tkinter.ttk',
@@ -119,7 +111,7 @@ jobs:
               a.zipfiles,
               a.datas,
               [],
-              name='GUARD',
+              name='device_monitor_linux',
               debug=False,
               bootloader_ignore_signals=False,
               strip=False,
@@ -135,25 +127,14 @@ jobs:
           )
           EOF
 
-          # Verify icon file exists
-          if [ ! -f "assets/guard_icon.png" ]; then
-            echo "❌ ERROR: Icon file not found: assets/guard_icon.png"
-            exit 1
-          fi
-          echo "✅ Icon file found: assets/guard_icon.png"
-
           # Build the executable
-          python3 -m PyInstaller device_monitor.spec --clean --noconfirm
+          pyinstaller device_monitor.spec --clean --noconfirm
 
           # Verify executable was created
-          if [ -f "dist/GUARD" ]; then
-            echo "✅ Successfully built GUARD"
-            chmod +x "dist/GUARD"
-            ls -lh "dist/GUARD"
-            
-            # Verify GLIBC compatibility
-            echo "Checking GLIBC dependencies:"
-            objdump -T dist/GUARD | grep GLIBC | sed 's/.*GLIBC_\([.0-9]*\).*/GLIBC_\1/g' | sort -Vu || true
+          if [ -f "dist/device_monitor_linux" ]; then
+            echo "✅ Successfully built device_monitor_linux"
+            chmod +x "dist/device_monitor_linux"
+            ls -lh "dist/device_monitor_linux"
           else
             echo "❌ Failed to build executable"
             exit 1
@@ -162,23 +143,17 @@ jobs:
       - name: Create release package
         run: |
           mkdir -p release/linux
-          cp dist/GUARD release/linux/
+          cp dist/device_monitor_linux release/linux/
 
           # Create README
-          cat > release/linux/README.txt <<EOF
-          GUARD Application - Linux Build
+          cat > release/linux/README.txt << EOF
+          Device Monitor - Linux Build
           Version: ${{ env.VERSION }}
           Built: $(date)
-          Platform: Linux x64 (CentOS 7 / RHEL 7.9+ Compatible)
-          GLIBC: 2.17 compatible
+          Platform: Linux x64
 
           Usage:
-            ./GUARD
-
-          System Requirements:
-            - RHEL 7.9+ or CentOS 7+
-            - X11 display server
-            - GLIBC 2.17 or higher
+            ./device_monitor_linux
 
           For more information, see the documentation at:
           https://github.com/${{ github.repository }}
@@ -186,13 +161,13 @@ jobs:
 
           # Create archive
           cd release
-          tar -czf GUARD_linux_${{ env.VERSION }}.tar.gz linux/
+          tar -czf device_monitor_linux_${{ env.VERSION }}.tar.gz linux/
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: GUARD-linux-${{ env.VERSION }}
-          path: release/GUARD_linux_${{ env.VERSION }}.tar.gz
+          name: device-monitor-linux-${{ env.VERSION }}
+          path: release/device_monitor_linux_${{ env.VERSION }}.tar.gz
 
   build-windows:
     runs-on: windows-latest
@@ -277,7 +252,7 @@ jobs:
               ['main.py'],
               pathex=['.'],
               binaries=[],
-              datas=[('assets/guard_icon.ico', 'assets')],
+              datas=[],
               hiddenimports=[
                   'tkinter',
                   'tkinter.ttk',
@@ -318,7 +293,7 @@ jobs:
               a.zipfiles,
               a.datas,
               [],
-              name='GUARD',
+              name='device_monitor_windows',
               debug=False,
               bootloader_ignore_signals=False,
               strip=False,
@@ -332,7 +307,7 @@ jobs:
               codesign_identity=None,
               entitlements_file=None,
               version='version_info.py',
-              icon='assets/guard_icon.ico',
+              icon=None,
           )
           "@
 
@@ -342,9 +317,9 @@ jobs:
           pyinstaller "device_monitor.spec" --clean --noconfirm
 
           # Verify executable was created
-          if (Test-Path "dist\GUARD.exe") {
-            Write-Output "✅ Successfully built GUARD.exe"
-            Get-ChildItem "dist\GUARD.exe" | Format-List
+          if (Test-Path "dist\device_monitor_windows.exe") {
+            Write-Output "✅ Successfully built device_monitor_windows.exe"
+            Get-ChildItem "dist\device_monitor_windows.exe" | Format-List
           } else {
             Write-Output "❌ Failed to build executable"
             exit 1
@@ -353,17 +328,17 @@ jobs:
       - name: Create release package
         run: |
           New-Item -ItemType Directory -Path "release\windows" -Force
-          Copy-Item "dist\GUARD.exe" -Destination "release\windows\"
+          Copy-Item "dist\device_monitor_windows.exe" -Destination "release\windows\"
 
           # Create README
           $readmeContent = @"
-          GUARD Application - Windows Build
+          Device Monitor - Windows Build
           Version: ${{ env.VERSION }}
           Built: $(Get-Date)
           Platform: Windows x64
 
           Usage:
-            GUARD.exe
+            device_monitor_windows.exe
 
           For more information, see the documentation at:
           https://github.com/${{ github.repository }}
@@ -373,13 +348,13 @@ jobs:
 
           # Create archive
           cd release
-          Compress-Archive -Path "windows" -DestinationPath "GUARD_windows_${{ env.VERSION }}.zip"
+          Compress-Archive -Path "windows" -DestinationPath "device_monitor_windows_${{ env.VERSION }}.zip"
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: GUARD-windows-${{ env.VERSION }}
-          path: release/GUARD_windows_${{ env.VERSION }}.zip
+          name: device-monitor-windows-${{ env.VERSION }}
+          path: release/device_monitor_windows_${{ env.VERSION }}.zip
 
   create-release:
     needs: [build-linux, build-windows]
@@ -407,106 +382,53 @@ jobs:
         with:
           path: artifacts
 
-      - name: Prepare unified release package
+      - name: Prepare release assets
         run: |
-          mkdir -p GUARD_v${{ env.VERSION }}
-          
-          # Extract Linux build
-          if [ -f artifacts/GUARD-linux-${{ env.VERSION }}/GUARD_linux_${{ env.VERSION }}.tar.gz ]; then
-            tar -xzf artifacts/GUARD-linux-${{ env.VERSION }}/GUARD_linux_${{ env.VERSION }}.tar.gz -C GUARD_v${{ env.VERSION }}/
-          fi
-          
-          # Extract Windows build
-          if [ -f artifacts/GUARD-windows-${{ env.VERSION }}/GUARD_windows_${{ env.VERSION }}.zip ]; then
-            unzip -q artifacts/GUARD-windows-${{ env.VERSION }}/GUARD_windows_${{ env.VERSION }}.zip -d GUARD_v${{ env.VERSION }}/
-          fi
-          
-          # Create unified README
-          cat > GUARD_v${{ env.VERSION }}/README.txt <<'EOF'
-          ================================================
-          GUARD Application - Cross-Platform Release
-          Version: ${{ env.VERSION }}
-          Built: $(date)
-          ================================================
-          
-          This package contains GUARD executables for both Linux and Windows platforms.
-          
-          LINUX (RHEL 7.9+ / CentOS 7+):
-            - Located in: linux/
-            - Executable: linux/GUARD
-            - Requirements: X11 display server, GLIBC 2.17+
-            - Usage: cd linux && ./GUARD
-          
-          WINDOWS (10/11):
-            - Located in: windows/
-            - Executable: windows/GUARD.exe
-            - Requirements: Windows 10 or later
-            - Usage: Run windows\GUARD.exe
-          
-          FEATURES:
-            ✅ USB device monitoring
-            ✅ System control (shutdown/restart)
-            ✅ Application launcher
-            ✅ Comprehensive logging
-            ✅ Cross-platform support
-          
-          For more information and documentation:
-          https://github.com/${{ github.repository }}
-          ================================================
-          EOF
-          
-          # Create unified archive
           mkdir -p release-assets
-          tar -czf release-assets/GUARD_v${{ env.VERSION }}_all-platforms.tar.gz GUARD_v${{ env.VERSION }}/
-          
-          # Also create a zip version for Windows users
-          zip -r -q release-assets/GUARD_v${{ env.VERSION }}_all-platforms.zip GUARD_v${{ env.VERSION }}/
-          
-          # List the contents
-          echo "Release package contents:"
-          ls -lh release-assets/
+          find artifacts -name "*.tar.gz" -exec cp {} release-assets/ \;
+          find artifacts -name "*.zip" -exec cp {} release-assets/ \;
+          ls -la release-assets/
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           tag_name: ${{ github.ref_name }}
-          name: GUARD v${{ env.VERSION }}
+          name: Device Monitor v${{ env.VERSION }}
           body: |
-            # GUARD v${{ env.VERSION }}
+            # Device Monitor v${{ env.VERSION }}
 
-            ## 📦 Unified Cross-Platform Package
+            ## 📦 Available Downloads
 
-            This release contains **both Linux and Windows executables** in a single download:
-            - **GUARD_v${{ env.VERSION }}_all-platforms.tar.gz** - For Linux/Unix systems
-            - **GUARD_v${{ env.VERSION }}_all-platforms.zip** - For Windows systems
+            ### Linux (RHEL 7.9+, Ubuntu)
+            - **device_monitor_linux_${{ env.VERSION }}.tar.gz** - Linux executable
 
-            Both archives contain the same organized folder structure with executables for both platforms.
+            ### Windows (10/11)
+            - **device_monitor_windows_${{ env.VERSION }}.zip** - Windows executable
 
             ## 🚀 Quick Start
 
-            ### Linux (RHEL 7.9+ / CentOS 7+)
+            ### Linux Installation
             ```bash
             # Extract the archive
-            tar -xzf GUARD_v${{ env.VERSION }}_all-platforms.tar.gz
-            cd GUARD_v${{ env.VERSION }}/linux/
+            tar -xzf device_monitor_linux_${{ env.VERSION }}.tar.gz
+            cd linux/
 
             # Run the executable
-            ./GUARD
+            ./device_monitor_linux
             ```
 
-            ### Windows (10/11)
+            ### Windows Installation
             ```cmd
             REM Extract the ZIP file
-            REM Navigate to GUARD_v${{ env.VERSION }}\windows\
-            REM Run: GUARD.exe
+            REM Run the executable:
+            device_monitor_windows.exe
             ```
 
             ## 📋 System Requirements
 
-            **Linux (RHEL 7.9+ / CentOS 7+)**
+            **Linux (RHEL 7.9+)**
             - X11 display server
-            - GLIBC 2.17 or higher
             - No additional dependencies required
 
             **Windows (10/11)**
@@ -520,12 +442,6 @@ jobs:
             - ✅ Comprehensive logging
             - ✅ Cross-platform support
 
-            ## 🔄 What's New in This Build
-
-            - **RHEL 7.9 Compatibility**: Linux executable now built on CentOS 7 with GLIBC 2.17
-            - **Icon Support**: Proper icon display on both platforms
-            - **Unified Package**: Both platforms in one convenient download
-
             Built with ❤️ using GitHub Actions
           draft: false
           prerelease: false
@@ -538,24 +454,18 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/v')
         with:
           tag_name: dev-${{ env.VERSION }}
-          name: GUARD Development Build ${{ env.VERSION }}
+          name: Device Monitor Development Build ${{ env.VERSION }}
           body: |
-            # GUARD Development Build ${{ env.VERSION }}
+            # Device Monitor Development Build ${{ env.VERSION }}
 
             This is a development build created manually or from the latest commit.
 
-            ## 📦 Unified Package
-
-            Both Linux and Windows executables are included in single archives:
-            - **GUARD_v${{ env.VERSION }}_all-platforms.tar.gz** - For Linux/Unix
-            - **GUARD_v${{ env.VERSION }}_all-platforms.zip** - For Windows
+            ## 📦 Available Downloads
+            - Linux: device_monitor_linux_${{ env.VERSION }}.tar.gz
+            - Windows: device_monitor_windows_${{ env.VERSION }}.zip
 
             **⚠️ Development Build Notice**
             This build is for testing purposes and may contain experimental features.
-            
-            ## Platforms Included
-            - Linux: RHEL 7.9+ / CentOS 7+ compatible (GLIBC 2.17)
-            - Windows: 10/11
           draft: false
           prerelease: true
           files: release-assets/*

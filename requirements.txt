@@ -1,5 +1,3 @@
-# Python Requirements for GUARD Application
-# Most dependencies are from the Python standard library
-
-# Windows-specific dependencies (only needed on Windows)
-# pywin32==306  # Uncomment if deploying on Windows
+# GUARD Application Requirements
+pyinstaller>=5.0
+Pillow>=8.0.0
