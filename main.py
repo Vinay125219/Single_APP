@@ -3,7 +3,8 @@
 """
 Device Monitor Application
 A Python tkinter-based GUI application for USB device monitoring and system control
-Compatible with RHEL 7.9 - Updated to use threading instead of multiprocessing
+Compatible with RHEL 7.9, RHEL 9.x, Windows 10/11
+Cross-platform support using threading
 """
 
 import tkinter as tk
@@ -17,13 +18,42 @@ import logging
 from pathlib import Path
 import json
 import sys
+import re
 
-# Configure logging
+# Platform detection
+IS_WINDOWS = sys.platform.startswith('win')
+IS_LINUX = sys.platform.startswith('linux')
+
+# Windows-specific imports
+if IS_WINDOWS:
+    try:
+        import wmi
+        WMI_AVAILABLE = True
+    except ImportError:
+        WMI_AVAILABLE = False
+        
+    try:
+        import ctypes
+        CTYPES_AVAILABLE = True
+    except ImportError:
+        CTYPES_AVAILABLE = False
+else:
+    WMI_AVAILABLE = False
+    CTYPES_AVAILABLE = False
+
+# Configure logging with platform-appropriate log file location
+if IS_WINDOWS:
+    log_dir = os.path.join(os.environ.get('APPDATA', '.'), 'GUARD')
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, 'device_monitor.log')
+else:
+    log_file = 'device_monitor.log'
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('device_monitor.log'),
+        logging.FileHandler(log_file),
         logging.StreamHandler()
     ]
 )
@@ -48,7 +78,14 @@ class USBMonitor:
         self._lock = threading.Lock()
     
     def is_device_connected(self, vendor_id, product_id, device_index=1):
-        """Check if a specific USB device is connected"""
+        """Check if a specific USB device is connected (cross-platform)"""
+        if IS_WINDOWS:
+            return self._is_device_connected_windows(vendor_id, product_id, device_index)
+        else:
+            return self._is_device_connected_linux(vendor_id, product_id, device_index)
+    
+    def _is_device_connected_linux(self, vendor_id, product_id, device_index=1):
+        """Check USB device on Linux using lsusb"""
         try:
             result = subprocess.run(['lsusb'], 
                                   stdout=subprocess.PIPE, 
@@ -69,11 +106,55 @@ class USBMonitor:
             return False
             
         except (subprocess.TimeoutExpired, subprocess.SubprocessError) as e:
-            logger.error(f"USB detection error: {e}")
+            logger.error(f"USB detection error (Linux): {e}")
+            return False
+    
+    def _is_device_connected_windows(self, vendor_id, product_id, device_index=1):
+        """Check USB device on Windows using WMI or wmic"""
+        try:
+            # Try WMI first if available
+            if WMI_AVAILABLE:
+                c = wmi.WMI()
+                usb_devices = c.Win32_USBControllerDevice()
+                current_index = 0
+                for device in usb_devices:
+                    device_id = device.Dependent.DeviceID.upper()
+                    vid_pid = f"VID_{vendor_id.upper()}&PID_{product_id.upper()}"
+                    if vid_pid in device_id:
+                        current_index += 1
+                        if current_index == device_index:
+                            return True
+                return False
+            else:
+                # Fallback to wmic command
+                result = subprocess.run(
+                    ['wmic', 'path', 'Win32_USBControllerDevice', 'get', 'Dependent'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=10,
+                    creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+                )
+                if result.returncode != 0:
+                    return False
+                
+                stdout_str = result.stdout.decode('utf-8', errors='ignore')
+                vid_pid = f"VID_{vendor_id.upper()}&PID_{product_id.upper()}"
+                current_index = stdout_str.upper().count(vid_pid)
+                return current_index >= device_index
+                
+        except Exception as e:
+            logger.error(f"USB detection error (Windows): {e}")
             return False
     
     def get_4761_device_paths(self):
-        """Detect all USB-4761 device paths using lsusb output."""
+        """Detect all USB-4761 device paths (cross-platform)"""
+        if IS_WINDOWS:
+            return self._get_4761_device_paths_windows()
+        else:
+            return self._get_4761_device_paths_linux()
+    
+    def _get_4761_device_paths_linux(self):
+        """Detect USB-4761 device paths on Linux using lsusb"""
         try:
             result = subprocess.run(['lsusb'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
             if result.returncode != 0:
@@ -90,7 +171,37 @@ class USBMonitor:
                     device_paths.append(f'/dev/bus/usb/{bus}/{device}')
             return device_paths
         except Exception as e:
-            logger.error(f"Error detecting 4761 devices: {e}")
+            logger.error(f"Error detecting 4761 devices (Linux): {e}")
+            return []
+    
+    def _get_4761_device_paths_windows(self):
+        """Detect USB-4761 device paths on Windows"""
+        try:
+            device_paths = []
+            if WMI_AVAILABLE:
+                c = wmi.WMI()
+                usb_devices = c.Win32_USBControllerDevice()
+                for device in usb_devices:
+                    device_id = device.Dependent.DeviceID.upper()
+                    if 'VID_1809&PID_4761' in device_id:
+                        device_paths.append(device_id)
+            else:
+                # Fallback to wmic command
+                result = subprocess.run(
+                    ['wmic', 'path', 'Win32_USBControllerDevice', 'get', 'Dependent'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=10,
+                    creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+                )
+                if result.returncode == 0:
+                    lines = result.stdout.decode('utf-8', errors='ignore').split('\n')
+                    for line in lines:
+                        if 'VID_1809&PID_4761' in line.upper():
+                            device_paths.append(line.strip())
+            return device_paths
+        except Exception as e:
+            logger.error(f"Error detecting 4761 devices (Windows): {e}")
             return []
 
     def check_devices(self):
@@ -249,11 +360,13 @@ class USBMonitor:
 
 
 class SystemController:
-    """System control operations with proper privilege handling"""
+    """System control operations with proper privilege handling (cross-platform)"""
     
     @staticmethod
     def check_sudo_available():
-        """Check if sudo is available"""
+        """Check if sudo is available (Linux only)"""
+        if IS_WINDOWS:
+            return False
         try:
             result = subprocess.run(['which', 'sudo'], 
                                   stdout=subprocess.PIPE, 
@@ -265,7 +378,9 @@ class SystemController:
     
     @staticmethod
     def check_password_required():
-        """Check if sudo requires password"""
+        """Check if sudo requires password (Linux only)"""
+        if IS_WINDOWS:
+            return False
         try:
             result = subprocess.run(['sudo', '-n', 'true'], 
                                   stdout=subprocess.PIPE, 
@@ -277,7 +392,30 @@ class SystemController:
     
     @classmethod
     def shutdown_system(cls):
-        """Shutdown the system using the best available method"""
+        """Shutdown the system using the best available method (cross-platform)"""
+        if IS_WINDOWS:
+            return cls._shutdown_windows()
+        else:
+            return cls._shutdown_linux()
+    
+    @classmethod
+    def _shutdown_windows(cls):
+        """Shutdown Windows system"""
+        try:
+            # Windows shutdown command: /s = shutdown, /t 0 = immediately
+            subprocess.Popen(
+                ['shutdown', '/s', '/t', '0'],
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            )
+            logger.info("System shutdown initiated (Windows)")
+            return True
+        except Exception as e:
+            logger.error(f"Windows shutdown failed: {e}")
+            return False
+    
+    @classmethod
+    def _shutdown_linux(cls):
+        """Shutdown Linux system"""
         commands = []
         
         if cls.check_sudo_available():
@@ -288,7 +426,6 @@ class SystemController:
                     ['sudo', 'halt', '-p']
                 ])
             else:
-                # Try without sudo first
                 commands.extend([
                     ['shutdown', '-h', 'now'],
                     ['poweroff'],
@@ -301,11 +438,34 @@ class SystemController:
                 ['halt', '-p']
             ])
         
-        return cls._execute_system_command(commands, "shutdown")
+        return cls._execute_linux_command(commands, "shutdown")
     
     @classmethod
     def restart_system(cls):
-        """Restart the system using the best available method"""
+        """Restart the system using the best available method (cross-platform)"""
+        if IS_WINDOWS:
+            return cls._restart_windows()
+        else:
+            return cls._restart_linux()
+    
+    @classmethod
+    def _restart_windows(cls):
+        """Restart Windows system"""
+        try:
+            # Windows restart command: /r = restart, /t 0 = immediately
+            subprocess.Popen(
+                ['shutdown', '/r', '/t', '0'],
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            )
+            logger.info("System restart initiated (Windows)")
+            return True
+        except Exception as e:
+            logger.error(f"Windows restart failed: {e}")
+            return False
+    
+    @classmethod
+    def _restart_linux(cls):
+        """Restart Linux system"""
         commands = []
         
         if cls.check_sudo_available():
@@ -325,11 +485,11 @@ class SystemController:
                 ['shutdown', '-r', 'now']
             ])
         
-        return cls._execute_system_command(commands, "restart")
+        return cls._execute_linux_command(commands, "restart")
     
     @staticmethod
-    def _execute_system_command(commands, action):
-        """Execute system commands with fallbacks"""
+    def _execute_linux_command(commands, action):
+        """Execute Linux system commands with fallbacks"""
         for cmd in commands:
             try:
                 # Check if command exists
@@ -350,7 +510,7 @@ class SystemController:
 
 
 class ApplicationLauncher:
-    """Handle application launching and monitoring"""
+    """Handle application launching and monitoring (cross-platform)"""
     
     def __init__(self):
         self.current_process = None
@@ -364,7 +524,7 @@ class ApplicationLauncher:
         self.callbacks[event] = callback
     
     def launch_application(self, executable_path):
-        """Launch external application"""
+        """Launch external application (cross-platform)"""
         with self._lock:
             if self.is_running:
                 raise RuntimeError("Another application is already running")
@@ -372,19 +532,32 @@ class ApplicationLauncher:
         if not os.path.exists(executable_path):
             raise FileNotFoundError(f"Executable not found: {executable_path}")
         
-        if not os.access(executable_path, os.X_OK):
+        # Check executable permission (Linux only - Windows handles this differently)
+        if IS_LINUX and not os.access(executable_path, os.X_OK):
             raise PermissionError(f"File is not executable: {executable_path}")
         
         try:
             # Set working directory to executable's directory
             working_dir = os.path.dirname(os.path.abspath(executable_path))
             
-            self.current_process = subprocess.Popen(
-                [executable_path],
-                cwd=working_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
+            # Platform-specific process creation
+            if IS_WINDOWS:
+                # Windows: use CREATE_NO_WINDOW flag to hide console
+                self.current_process = subprocess.Popen(
+                    [executable_path],
+                    cwd=working_dir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+                )
+            else:
+                # Linux
+                self.current_process = subprocess.Popen(
+                    [executable_path],
+                    cwd=working_dir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
             
             with self._lock:
                 self.is_running = True
@@ -817,7 +990,14 @@ class DeviceMonitorGUI:
                 logger.error(f"Failed to pause monitoring: {e}")
     
     def browse_usb(self):
-        """Browse USB devices for executables"""
+        """Browse USB devices for executables (cross-platform)"""
+        if IS_WINDOWS:
+            self._browse_usb_windows()
+        else:
+            self._browse_usb_linux()
+    
+    def _browse_usb_linux(self):
+        """Browse USB on Linux"""
         usb_paths = ['/run/media', '/media', '/mnt']
         
         for path in usb_paths:
@@ -832,6 +1012,36 @@ class DeviceMonitorGUI:
         
         messagebox.showwarning("Warning", "No USB mount points found")
     
+    def _browse_usb_windows(self):
+        """Browse USB on Windows - detect removable drives"""
+        import string
+        removable_drives = []
+        
+        # Check for removable drives (D: through Z:)
+        for drive_letter in string.ascii_uppercase[3:]:  # Start from D:
+            drive = f"{drive_letter}:\\"
+            if os.path.exists(drive):
+                try:
+                    # Try to access the drive to ensure it's ready
+                    os.listdir(drive)
+                    removable_drives.append(drive)
+                except (PermissionError, OSError):
+                    continue
+        
+        if removable_drives:
+            # Start in the first removable drive
+            initial_dir = removable_drives[0]
+        else:
+            # Fallback to current directory
+            initial_dir = os.getcwd()
+        
+        directory = filedialog.askdirectory(
+            title="Select USB/Removable Drive Directory",
+            initialdir=initial_dir
+        )
+        if directory:
+            self.find_executable_in_directory(directory)
+    
     def browse_folder(self):
         """Browse for executable files"""
         directory = filedialog.askdirectory(
@@ -841,15 +1051,25 @@ class DeviceMonitorGUI:
             self.find_executable_in_directory(directory)
     
     def find_executable_in_directory(self, directory):
-        """Find executable files in directory"""
+        """Find executable files in directory (cross-platform)"""
         try:
             executables = []
             for file_path in Path(directory).rglob('*'):
-                if file_path.is_file() and os.access(file_path, os.X_OK):
-                    executables.append(str(file_path))
+                if file_path.is_file():
+                    if IS_WINDOWS:
+                        # On Windows, look for .exe files
+                        if file_path.suffix.lower() == '.exe':
+                            executables.append(str(file_path))
+                    else:
+                        # On Linux, check executable permission
+                        if os.access(file_path, os.X_OK):
+                            executables.append(str(file_path))
             
             if not executables:
-                messagebox.showwarning("Warning", "No executable files found in selected directory")
+                if IS_WINDOWS:
+                    messagebox.showwarning("Warning", "No .exe files found in selected directory")
+                else:
+                    messagebox.showwarning("Warning", "No executable files found in selected directory")
                 return
             
             if len(executables) == 1:

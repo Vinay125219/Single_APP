@@ -1,3 +1,13 @@
 # GUARD Application Requirements
+# Cross-platform dependencies
+
+# Build tools
 pyinstaller>=5.0
+
+# Image processing
 Pillow>=8.0.0
+
+# Windows-specific dependencies (conditionally installed)
+# These are installed only on Windows via the workflow
+# pywin32>=300
+# WMI>=1.5.1

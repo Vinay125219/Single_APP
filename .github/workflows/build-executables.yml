@@ -1,4 +1,4 @@
-name: Build Device Monitor Executables
+name: Build GUARD Application
 
 on:
   push:
@@ -14,47 +14,21 @@ on:
         default: "dev"
 
 env:
-  PYTHON_VERSION: "3.9"
-  APP_NAME: "device_monitor"
+  APP_NAME: "GUARD"
 
 jobs:
+  # ============================================================
+  # Linux Build - Using CentOS 7 for RHEL 7.x/9.x Compatibility
+  # ============================================================
   build-linux:
     runs-on: ubuntu-latest
-
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            python3-tk \
-            python3-dev \
-            build-essential \
-            libffi-dev \
-            libbz2-dev \
-            libreadline-dev \
-            libsqlite3-dev \
-            libssl-dev \
-            zlib1g-dev \
-            libncurses5-dev \
-            libgdbm-dev \
-            libnss3-dev \
-            wget
-
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller
-          pip install -r requirements.txt
-
-      - name: Create version info
+      - name: Set version
+        id: version
         run: |
           VERSION="${{ github.event.inputs.version }}"
           if [ -z "$VERSION" ] || [ "$VERSION" = "dev" ]; then
@@ -65,110 +39,128 @@ jobs:
             fi
           fi
           echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
 
-      - name: Build executable with PyInstaller
-        run: |
-          # Create PyInstaller spec file
-          cat > device_monitor.spec << EOF
-          # -*- mode: python ; coding: utf-8 -*-
-
-          block_cipher = None
-
-          a = Analysis(
-              ['main.py'],
-              pathex=['.'],
-              binaries=[],
-              datas=[],
-              hiddenimports=[
-                  'tkinter',
-                  'tkinter.ttk',
-                  'tkinter.messagebox',
-                  'tkinter.filedialog',
-                  'threading',
-                  'subprocess',
-                  'queue',
-                  'logging',
-                  'pathlib',
-                  'json',
-              ],
-              hookspath=[],
-              hooksconfig={},
-              runtime_hooks=[],
-              excludes=[],
-              win_no_prefer_redirects=False,
-              win_private_assemblies=False,
-              cipher=block_cipher,
-              noarchive=False,
-          )
-
-          pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
-
-          exe = EXE(
-              pyz,
-              a.scripts,
-              a.binaries,
-              a.zipfiles,
-              a.datas,
-              [],
-              name='device_monitor_linux',
-              debug=False,
-              bootloader_ignore_signals=False,
-              strip=False,
-              upx=True,
-              upx_exclude=[],
-              runtime_tmpdir=None,
-              console=False,
-              disable_windowed_traceback=False,
-              argv_emulation=False,
-              target_arch=None,
-              codesign_identity=None,
-              entitlements_file=None,
-          )
-          EOF
-
-          # Build the executable
-          pyinstaller device_monitor.spec --clean --noconfirm
-
-          # Verify executable was created
-          if [ -f "dist/device_monitor_linux" ]; then
-            echo "✅ Successfully built device_monitor_linux"
-            chmod +x "dist/device_monitor_linux"
-            ls -lh "dist/device_monitor_linux"
-          else
-            echo "❌ Failed to build executable"
-            exit 1
-          fi
+      - name: Build executable inside CentOS 7 container
+        uses: addnab/docker-run-action@v3
+        with:
+          image: centos:7
+          options: -v ${{ github.workspace }}:/src
+          run: |
+            set -e
+            
+            echo "=== Fixing CentOS 7 repository URLs ==="
+            sed -i 's|mirrorlist=|#mirrorlist=|g' /etc/yum.repos.d/CentOS-*.repo
+            sed -i 's|#baseurl=http://mirror.centos.org/centos|baseurl=http://vault.centos.org/centos|g' /etc/yum.repos.d/CentOS-*.repo
+            
+            echo "=== Installing system dependencies ==="
+            yum -y update
+            yum -y install epel-release
+            yum -y install \
+              python3 python3-pip python3-devel \
+              gcc gcc-c++ make which \
+              tk tcl python3-tkinter \
+              patchelf scons \
+              zlib-devel zlib-static glibc-static
+            
+            echo "=== Python version ==="
+            python3 --version
+            
+            echo "=== Installing Python dependencies ==="
+            pip3 install --upgrade pip setuptools wheel
+            pip3 install pyinstaller Pillow staticx patchelf-wrapper
+            
+            cd /src
+            
+            echo "=== Verifying main.py syntax ==="
+            python3 -c "import main; print('✅ Script syntax OK')"
+            
+            echo "=== Building executable with PyInstaller ==="
+            export TCL_LIBRARY=/usr/share/tcl8.5
+            export TK_LIBRARY=/usr/share/tk8.5
+            
+            pyinstaller --onefile --noconsole main.py \
+              --name GUARD_linux_temp \
+              --add-binary "/usr/lib64/libtcl8.5.so:." \
+              --add-binary "/usr/lib64/libtk8.5.so:." \
+              --add-data "/usr/share/tcl8.5:lib/tcl8.5" \
+              --add-data "/usr/share/tk8.5:lib/tk8.5" \
+              --hidden-import tkinter \
+              --hidden-import tkinter.ttk \
+              --hidden-import tkinter.messagebox \
+              --hidden-import tkinter.filedialog \
+              --hidden-import threading \
+              --hidden-import subprocess \
+              --hidden-import queue \
+              --hidden-import logging \
+              --hidden-import pathlib \
+              --hidden-import json \
+              --clean
+            
+            echo "=== Applying staticx for GLIBC independence ==="
+            staticx dist/GUARD_linux_temp dist/GUARD_linux
+            
+            if [ -f "dist/GUARD_linux" ]; then
+              chmod +x "dist/GUARD_linux"
+              echo "✅ Successfully built GUARD_linux"
+              ls -lh "dist/GUARD_linux"
+              
+              echo "=== Checking GLIBC requirements ==="
+              objdump -T dist/GUARD_linux 2>/dev/null | grep GLIBC || echo "✅ Static binary - no GLIBC dependency"
+            else
+              echo "❌ Failed to build executable"
+              exit 1
+            fi
 
       - name: Create release package
         run: |
           mkdir -p release/linux
-          cp dist/device_monitor_linux release/linux/
-
-          # Create README
+          cp dist/GUARD_linux release/linux/
+          
+          if [ -f "assets/guard_icon.png" ]; then
+            cp assets/guard_icon.png release/linux/
+          fi
+          
           cat > release/linux/README.txt << EOF
-          Device Monitor - Linux Build
+          GUARD Application - Linux Build
+          ================================
           Version: ${{ env.VERSION }}
           Built: $(date)
-          Platform: Linux x64
-
+          Platform: Linux x64 (RHEL 7.x, RHEL 9.x, CentOS, Ubuntu compatible)
+          
+          This executable is statically linked and compatible with:
+          - RHEL 7.x (7.9+)
+          - RHEL 8.x
+          - RHEL 9.x
+          - CentOS 7/8
+          - Ubuntu 18.04+
+          - Most Linux distributions with X11
+          
           Usage:
-            ./device_monitor_linux
-
-          For more information, see the documentation at:
+            chmod +x GUARD_linux
+            ./GUARD_linux
+          
+          Requirements:
+            - X11 display server
+            - No additional dependencies required (statically linked)
+          
+          For more information, see:
           https://github.com/${{ github.repository }}
           EOF
-
-          # Create archive
+          
           cd release
-          tar -czf device_monitor_linux_${{ env.VERSION }}.tar.gz linux/
+          tar -czf GUARD_linux_${{ env.VERSION }}.tar.gz linux/
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: device-monitor-linux-${{ env.VERSION }}
-          path: release/device_monitor_linux_${{ env.VERSION }}.tar.gz
+          name: GUARD-linux-${{ env.VERSION }}
+          path: release/GUARD_linux_${{ env.VERSION }}.tar.gz
 
+  # ============================================================
+  # Windows Build - Windows 10/11 Compatible
+  # ============================================================
   build-windows:
     runs-on: windows-latest
 
@@ -179,16 +171,10 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: "3.9"
 
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller
-          pip install pywin32
-          pip install -r requirements.txt
-
-      - name: Create version info
+      - name: Set version
+        id: version
         shell: bash
         run: |
           VERSION="${{ github.event.inputs.version }}"
@@ -200,15 +186,18 @@ jobs:
             fi
           fi
           echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller pywin32 Pillow WMI
+          pip install -r requirements.txt
 
       - name: Create version resource file
         run: |
           $versionInfo = @"
-          # UTF-8
-          #
-          # For more details about fixed file info 'ffi' see:
-          # http://msdn.microsoft.com/en-us/library/ms646997.aspx
           VSVersionInfo(
             ffi=FixedFileInfo(
               filevers=(1,0,0,0),
@@ -219,107 +208,63 @@ jobs:
               fileType=0x1,
               subtype=0x0,
               date=(0, 0)
-              ),
+            ),
             kids=[
               StringFileInfo(
                 [
                 StringTable(
                   u'040904B0',
-                  [StringStruct(u'CompanyName', u'Device Monitor'),
-                  StringStruct(u'FileDescription', u'Device Monitor Application'),
-                  StringStruct(u'FileVersion', u'${{ env.VERSION }}'),
-                  StringStruct(u'InternalName', u'device_monitor'),
+                  [StringStruct(u'CompanyName', u'GUARD Application'),
+                  StringStruct(u'FileDescription', u'GUARD - Device Monitor Application'),
+                  StringStruct(u'FileVersion', u'1.0.0'),
+                  StringStruct(u'InternalName', u'GUARD'),
                   StringStruct(u'LegalCopyright', u'Copyright (c) 2024'),
-                  StringStruct(u'OriginalFilename', u'device_monitor_windows.exe'),
-                  StringStruct(u'ProductName', u'Device Monitor'),
-                  StringStruct(u'ProductVersion', u'${{ env.VERSION }}')])]
-                ), 
+                  StringStruct(u'OriginalFilename', u'GUARD_windows.exe'),
+                  StringStruct(u'ProductName', u'GUARD Application'),
+                  StringStruct(u'ProductVersion', u'1.0.0')])
+                ]
+              ), 
               VarFileInfo([VarStruct(u'Translation', [1033, 1200])])
             ]
           )
           "@
-
+          
           $versionInfo | Out-File -FilePath "version_info.py" -Encoding UTF8
 
       - name: Build executable with PyInstaller
         run: |
-          $specContent = @"
-          # -*- mode: python ; coding: utf-8 -*-
-
-          block_cipher = None
-
-          a = Analysis(
-              ['main.py'],
-              pathex=['.'],
-              binaries=[],
-              datas=[],
-              hiddenimports=[
-                  'tkinter',
-                  'tkinter.ttk',
-                  'tkinter.messagebox',
-                  'tkinter.filedialog',
-                  'threading',
-                  'subprocess',
-                  'queue',
-                  'logging',
-                  'pathlib',
-                  'json',
-                  'win32serviceutil',
-                  'win32service',
-                  'win32event',
-                  'servicemanager',
-                  'win32ts',
-                  'win32con',
-                  'win32api',
-                  'win32gui',
-                  'win32process',
-              ],
-              hookspath=[],
-              hooksconfig={},
-              runtime_hooks=[],
-              excludes=[],
-              win_no_prefer_redirects=False,
-              win_private_assemblies=False,
-              cipher=block_cipher,
-              noarchive=False,
-          )
-
-          pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
-
-          exe = EXE(
-              pyz,
-              a.scripts,
-              a.binaries,
-              a.zipfiles,
-              a.datas,
-              [],
-              name='device_monitor_windows',
-              debug=False,
-              bootloader_ignore_signals=False,
-              strip=False,
-              upx=True,
-              upx_exclude=[],
-              runtime_tmpdir=None,
-              console=False,
-              disable_windowed_traceback=False,
-              argv_emulation=False,
-              target_arch=None,
-              codesign_identity=None,
-              entitlements_file=None,
-              version='version_info.py',
-              icon=None,
-          )
-          "@
-
-          $specContent | Out-File -FilePath "device_monitor.spec" -Encoding UTF8
-
-          # Build the executable
-          pyinstaller "device_monitor.spec" --clean --noconfirm
-
-          # Verify executable was created
-          if (Test-Path "dist\device_monitor_windows.exe") {
-            Write-Output "✅ Successfully built device_monitor_windows.exe"
-            Get-ChildItem "dist\device_monitor_windows.exe" | Format-List
+          $iconPath = "assets\guard_icon.ico"
+          $iconArg = ""
+          
+          if (Test-Path $iconPath) {
+            $iconArg = "--icon=$iconPath"
+            Write-Output "Using icon: $iconPath"
+          }
+          
+          pyinstaller --onefile --noconsole main.py `
+            --name GUARD_windows `
+            --version-file version_info.py `
+            $iconArg `
+            --hidden-import tkinter `
+            --hidden-import tkinter.ttk `
+            --hidden-import tkinter.messagebox `
+            --hidden-import tkinter.filedialog `
+            --hidden-import threading `
+            --hidden-import subprocess `
+            --hidden-import queue `
+            --hidden-import logging `
+            --hidden-import pathlib `
+            --hidden-import json `
+            --hidden-import win32api `
+            --hidden-import win32con `
+            --hidden-import win32gui `
+            --hidden-import win32process `
+            --hidden-import wmi `
+            --clean --noconfirm
+          
+          if (Test-Path "dist\GUARD_windows.exe") {
+            Write-Output "✅ Successfully built GUARD_windows.exe"
+            Get-ChildItem "dist\GUARD_windows.exe" | Format-List
           } else {
             Write-Output "❌ Failed to build executable"
             exit 1
@@ -328,34 +273,48 @@ jobs:
       - name: Create release package
         run: |
           New-Item -ItemType Directory -Path "release\windows" -Force
-          Copy-Item "dist\device_monitor_windows.exe" -Destination "release\windows\"
-
-          # Create README
+          Copy-Item "dist\GUARD_windows.exe" -Destination "release\windows\"
+          
+          if (Test-Path "assets\guard_icon.ico") {
+            Copy-Item "assets\guard_icon.ico" -Destination "release\windows\"
+          }
+          
           $readmeContent = @"
-          Device Monitor - Windows Build
+          GUARD Application - Windows Build
+          ==================================
           Version: ${{ env.VERSION }}
           Built: $(Get-Date)
-          Platform: Windows x64
-
+          Platform: Windows x64 (Windows 10/11 compatible)
+          
+          This executable is compatible with:
+          - Windows 10 (all versions)
+          - Windows 11 (all versions)
+          - Windows Server 2016+
+          
           Usage:
-            device_monitor_windows.exe
-
-          For more information, see the documentation at:
+            Double-click GUARD_windows.exe to run
+          
+          Requirements:
+            - No additional dependencies required
+          
+          For more information, see:
           https://github.com/${{ github.repository }}
           "@
-
+          
           $readmeContent | Out-File -FilePath "release\windows\README.txt" -Encoding UTF8
-
-          # Create archive
+          
           cd release
-          Compress-Archive -Path "windows" -DestinationPath "device_monitor_windows_${{ env.VERSION }}.zip"
+          Compress-Archive -Path "windows" -DestinationPath "GUARD_windows_${{ env.VERSION }}.zip"
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: device-monitor-windows-${{ env.VERSION }}
-          path: release/device_monitor_windows_${{ env.VERSION }}.zip
+          name: GUARD-windows-${{ env.VERSION }}
+          path: release/GUARD_windows_${{ env.VERSION }}.zip
 
+  # ============================================================
+  # Create Combined Release
+  # ============================================================
   create-release:
     needs: [build-linux, build-windows]
     runs-on: ubuntu-latest
@@ -365,7 +324,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Create version info
+      - name: Set version
         run: |
           VERSION="${{ github.event.inputs.version }}"
           if [ -z "$VERSION" ] || [ "$VERSION" = "dev" ]; then
@@ -387,62 +346,39 @@ jobs:
           mkdir -p release-assets
           find artifacts -name "*.tar.gz" -exec cp {} release-assets/ \;
           find artifacts -name "*.zip" -exec cp {} release-assets/ \;
+          echo "=== Release Assets ==="
           ls -la release-assets/
 
-      - name: Create Release
+      - name: Create Release (Tagged)
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           tag_name: ${{ github.ref_name }}
-          name: Device Monitor v${{ env.VERSION }}
+          name: GUARD Application v${{ env.VERSION }}
           body: |
-            # Device Monitor v${{ env.VERSION }}
+            # GUARD Application v${{ env.VERSION }}
 
-            ## 📦 Available Downloads
+            ## 📦 Downloads
 
-            ### Linux (RHEL 7.9+, Ubuntu)
-            - **device_monitor_linux_${{ env.VERSION }}.tar.gz** - Linux executable
-
-            ### Windows (10/11)
-            - **device_monitor_windows_${{ env.VERSION }}.zip** - Windows executable
+            | Platform | File | Compatibility |
+            |----------|------|---------------|
+            | Linux | GUARD_linux_${{ env.VERSION }}.tar.gz | RHEL 7.9+, 9.x, CentOS, Ubuntu |
+            | Windows | GUARD_windows_${{ env.VERSION }}.zip | Windows 10, 11 |
 
             ## 🚀 Quick Start
 
-            ### Linux Installation
+            **Linux:**
             ```bash
-            # Extract the archive
-            tar -xzf device_monitor_linux_${{ env.VERSION }}.tar.gz
-            cd linux/
-
-            # Run the executable
-            ./device_monitor_linux
+            tar -xzf GUARD_linux_${{ env.VERSION }}.tar.gz && cd linux && chmod +x GUARD_linux && ./GUARD_linux
             ```
 
-            ### Windows Installation
-            ```cmd
-            REM Extract the ZIP file
-            REM Run the executable:
-            device_monitor_windows.exe
-            ```
-
-            ## 📋 System Requirements
-
-            **Linux (RHEL 7.9+)**
-            - X11 display server
-            - No additional dependencies required
-
-            **Windows (10/11)**
-            - No additional dependencies required
+            **Windows:** Extract ZIP and double-click `GUARD_windows.exe`
 
             ## 🔧 Features
-
-            - ✅ USB device monitoring
-            - ✅ System control (shutdown/restart)
-            - ✅ Application launcher
-            - ✅ Comprehensive logging
-            - ✅ Cross-platform support
-
-            Built with ❤️ using GitHub Actions
+            - USB device monitoring (4750, 4761)
+            - System control (shutdown/restart)
+            - Application launcher
+            - Cross-platform support
           draft: false
           prerelease: false
           files: release-assets/*
@@ -454,18 +390,14 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/v')
         with:
           tag_name: dev-${{ env.VERSION }}
-          name: Device Monitor Development Build ${{ env.VERSION }}
+          name: GUARD Development Build ${{ env.VERSION }}
           body: |
-            # Device Monitor Development Build ${{ env.VERSION }}
+            # GUARD Development Build ${{ env.VERSION }}
 
-            This is a development build created manually or from the latest commit.
+            ⚠️ **Development build for testing purposes**
 
-            ## 📦 Available Downloads
-            - Linux: device_monitor_linux_${{ env.VERSION }}.tar.gz
-            - Windows: device_monitor_windows_${{ env.VERSION }}.zip
-
-            **⚠️ Development Build Notice**
-            This build is for testing purposes and may contain experimental features.
+            - Linux: GUARD_linux_${{ env.VERSION }}.tar.gz
+            - Windows: GUARD_windows_${{ env.VERSION }}.zip
           draft: false
           prerelease: true
           files: release-assets/*
