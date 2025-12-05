@@ -108,6 +108,12 @@ jobs:
               
               echo "=== Checking GLIBC requirements ==="
               objdump -T dist/GUARD_linux 2>/dev/null | grep GLIBC || echo "[OK] Static binary - no GLIBC dependency"
+              
+              # Fix permissions so GitHub runner can access files created by container
+              echo "=== Fixing file permissions ==="
+              chmod -R 755 dist/
+              chmod 644 dist/GUARD_linux
+              chmod +x dist/GUARD_linux
             else
               echo "[FAILED] Build executable failed"
               exit 1
