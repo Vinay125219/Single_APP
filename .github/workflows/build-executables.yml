@@ -98,8 +98,11 @@ jobs:
               --hidden-import json \
               --clean
             
-            echo "=== Applying staticx for GLIBC independence ==="
-            staticx dist/GUARD_linux_temp dist/GUARD_linux
+            # echo "=== Applying staticx for GLIBC independence ==="
+            # staticx dist/GUARD_linux_temp dist/GUARD_linux
+            
+            # Use the PyInstaller output directly (it is already RHEL 7 compatible)
+            mv dist/GUARD_linux_temp dist/GUARD_linux
             
             if [ -f "dist/GUARD_linux" ]; then
               chmod +x "dist/GUARD_linux"
@@ -107,7 +110,8 @@ jobs:
               ls -lh "dist/GUARD_linux"
               
               echo "=== Checking GLIBC requirements ==="
-              objdump -T dist/GUARD_linux 2>/dev/null | grep GLIBC || echo "[OK] Static binary - no GLIBC dependency"
+              # Check the GLIBC version required by the binary
+              objdump -T dist/GUARD_linux 2>/dev/null | grep GLIBC_2. | sort -V | tail -n 1 || echo "Could not determine GLIBC version"
               
               # Fix permissions so GitHub runner can access files created by container
               echo "=== Fixing file permissions ==="
@@ -135,13 +139,13 @@ jobs:
           Built: $(date)
           Platform: Linux x64 (RHEL 7.x, RHEL 9.x, CentOS, Ubuntu compatible)
           
-          This executable is statically linked and compatible with:
+          This executable is built on CentOS 7 and compatible with:
           - RHEL 7.x (7.9+)
           - RHEL 8.x
           - RHEL 9.x
           - CentOS 7/8
           - Ubuntu 18.04+
-          - Most Linux distributions with X11
+          - Most Linux distributions with glibc 2.17+
           
           Usage:
             chmod +x GUARD_linux
@@ -149,7 +153,7 @@ jobs:
           
           Requirements:
             - X11 display server
-            - No additional dependencies required (statically linked)
+            - Standard system libraries (glibc 2.17+)
           
           For more information, see:
           https://github.com/${{ github.repository }}
@@ -367,24 +371,42 @@ jobs:
             ## 📦 Downloads
 
             | Platform | File | Compatibility |
-            |----------|------|---------------|
-            | Linux | GUARD_linux_${{ env.VERSION }}.tar.gz | RHEL 7.9+, 9.x, CentOS, Ubuntu |
-            | Windows | GUARD_windows_${{ env.VERSION }}.zip | Windows 10, 11 |
+            ### Linux (RHEL 7.x, 9.x, CentOS, Ubuntu)
+            - **GUARD_linux_${{ env.VERSION }}.tar.gz** - Linux executable (RHEL 7 compatible)
+            - Built on CentOS 7 for maximum compatibility (glibc 2.17+)
+            - Compatible with RHEL 7.9+, RHEL 9.x, and most Linux distributions
+
+            ### Windows (10/11)
+            - **GUARD_windows_${{ env.VERSION }}.zip** - Windows executable
+            - Compatible with Windows 10, 11, and Windows Server 2016+
 
             ## 🚀 Quick Start
 
-            **Linux:**
+            ### Linux Installation
             ```bash
-            tar -xzf GUARD_linux_${{ env.VERSION }}.tar.gz && cd linux && chmod +x GUARD_linux && ./GUARD_linux
+            # Extract the archive
+            tar -xzf GUARD_linux_${{ env.VERSION }}.tar.gz
+            cd linux/
+            
+            # Make executable and run
+            chmod +x GUARD_linux
+            ./GUARD_linux
             ```
 
-            **Windows:** Extract ZIP and double-click `GUARD_windows.exe`
+            ### Windows Installation
+            ```cmd
+            REM Extract the ZIP file
+            REM Double-click GUARD_windows.exe to run
+            ```
 
-            ## 🔧 Features
-            - USB device monitoring (4750, 4761)
-            - System control (shutdown/restart)
-            - Application launcher
-            - Cross-platform support
+            ## � System Requirements
+
+            **Linux (RHEL 7.x/9.x)**
+            - X11 display server
+            - Standard system libraries (glibc 2.17+)
+
+            **Windows (10/11)**
+            - No additional dependencies required
           draft: false
           prerelease: false
           files: release-assets/*
