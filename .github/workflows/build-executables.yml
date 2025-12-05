@@ -74,7 +74,7 @@ jobs:
             cd /src
             
             echo "=== Verifying main.py syntax ==="
-            python3 -c "import main; print('✅ Script syntax OK')"
+            python3 -c "import main; print('Script syntax OK')"
             
             echo "=== Building executable with PyInstaller ==="
             export TCL_LIBRARY=/usr/share/tcl8.5
@@ -103,13 +103,13 @@ jobs:
             
             if [ -f "dist/GUARD_linux" ]; then
               chmod +x "dist/GUARD_linux"
-              echo "✅ Successfully built GUARD_linux"
+              echo "[SUCCESS] Built GUARD_linux"
               ls -lh "dist/GUARD_linux"
               
               echo "=== Checking GLIBC requirements ==="
-              objdump -T dist/GUARD_linux 2>/dev/null | grep GLIBC || echo "✅ Static binary - no GLIBC dependency"
+              objdump -T dist/GUARD_linux 2>/dev/null | grep GLIBC || echo "[OK] Static binary - no GLIBC dependency"
             else
-              echo "❌ Failed to build executable"
+              echo "[FAILED] Build executable failed"
               exit 1
             fi
 
@@ -263,10 +263,10 @@ jobs:
             --clean --noconfirm
           
           if (Test-Path "dist\GUARD_windows.exe") {
-            Write-Output "✅ Successfully built GUARD_windows.exe"
+            Write-Output "[SUCCESS] Built GUARD_windows.exe"
             Get-ChildItem "dist\GUARD_windows.exe" | Format-List
           } else {
-            Write-Output "❌ Failed to build executable"
+            Write-Output "[FAILED] Build executable failed"
             exit 1
           }
 

@@ -44,7 +44,7 @@ jobs:
             # Lint the code
             echo "Linting with flake8..."
             flake8 . --count --exit-zero --max-line-length=127 --statistics
-            echo "✅ Linting complete."
+            echo "[OK] Linting complete."
 
             # Test the script first
             python3 -c "import main; print('Script syntax OK')"
@@ -57,7 +57,7 @@ jobs:
               --add-binary "/usr/lib64/libtk8.5.so:." \
               --add-data "/usr/share/tcl8.5:lib/tcl8.5" \
               --add-data "/usr/share/tk8.5:lib/tk8.5"
-            echo "✅ Build completed. Executable is at dist/device_monitor_rhel7"
+            echo "[SUCCESS] Build completed. Executable is at dist/device_monitor_rhel7"
 
       - name: Upload Executable Artifact
         uses: actions/upload-artifact@v4
